@@ -34,6 +34,20 @@ class Prefs(ctx: Context) {
     fun wakeList(): List<String> =
         wakeWords.split(",").map { normalize(it) }.filter { it.isNotBlank() }
 
+    /**
+     * Gramática do Vosk para a escuta da palavra de ativação: ele só pode escolher entre
+     * as palavras de ativação ou "[unk]" (qualquer outra coisa). Sem isso o modelo prefere
+     * palavras comuns ("capa", "catarina") a nomes como "capri".
+     * Mantém os acentos, porque o vocabulário do modelo tem as palavras acentuadas.
+     */
+    fun wakeGrammar(): String {
+        val arr = org.json.JSONArray()
+        wakeWords.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }.distinct()
+            .forEach { arr.put(it) }
+        arr.put("[unk]")
+        return arr.toString()
+    }
+
     companion object {
         const val DEFAULT_MODEL = "gemini-flash-latest"
         const val DEFAULT_WAKE = "capri, cabri, capre, kapri, caprin"

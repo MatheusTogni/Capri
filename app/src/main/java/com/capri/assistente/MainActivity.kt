@@ -243,6 +243,17 @@ class MainActivity : Activity() {
             })
         }
         frame.addView(titles, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
+        // versão discreta no canto, só para consulta
+        val version = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (_: Exception) { null }
+        if (version != null) {
+            frame.addView(mono(10f, Neon.MUTED).apply {
+                text = "v$version"
+                alpha = 0.8f
+                setShadowLayer(4f, 0f, 0f, 0xFF000000.toInt())
+            }, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply {
+                setMargins(0, 0, dp(16), dp(14))
+            })
+        }
         frame.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(240))
         return frame
     }

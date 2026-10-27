@@ -138,7 +138,7 @@ class CapriService : Service() {
         session++
         val id = session
         return try {
-            val rec = Recognizer(m, 16000f)
+            val rec = if (question) Recognizer(m, 16000f) else Recognizer(m, 16000f, prefs.wakeGrammar())
             voskRecognizer = rec
             val svc = SpeechService(rec, 16000f)
             speechService = svc
@@ -228,8 +228,9 @@ class CapriService : Service() {
         }
     }
 
+    // "[unk]" é o que a gramática da ativação devolve para qualquer coisa que não seja a palavra
     private fun parse(json: String?, field: String): String =
-        try { JSONObject(json ?: "{}").optString(field, "").trim() } catch (_: Exception) { "" }
+        try { JSONObject(json ?: "{}").optString(field, "").replace("[unk]", "").trim() } catch (_: Exception) { "" }
 
     // ---------- 2. Ouvir a pergunta ----------
 
@@ -338,6 +339,9 @@ class CapriService : Service() {
         Thread {
             val answer = try {
                 g.ask(q)
+            } catch (e: GeminiBusyException) {
+                CapriBus.log("⏳ ${e.message}")
+                "O Gemini está sobrecarregado agora. Tenta de novo daqui a pouco."
             } catch (e: Exception) {
                 CapriBus.log("❌ ${e.message}")
                 "Deu um erro ao falar com o Gemini. Dá uma olhada no aplicativo."
