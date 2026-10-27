@@ -392,6 +392,7 @@ class CapriService : Service() {
             .setContentTitle("Capri")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setColor(Neon.RED)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(openPi)

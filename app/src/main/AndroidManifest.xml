@@ -20,8 +20,9 @@
 
     <application
         android:label="Capri"
-        android:icon="@android:drawable/ic_btn_speak_now"
-        android:theme="@android:style/Theme.DeviceDefault"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:allowBackup="false">
 
         <activity
