@@ -8,7 +8,9 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
+import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
@@ -53,6 +55,8 @@ class CapriService : Service() {
     private var androidRecognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var player: MediaPlayer? = null
+    private var speakId = 0 // invalida áudios do Gemini que chegarem atrasados
     private var gemini: Gemini? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var tone: ToneGenerator? = null
@@ -355,11 +359,66 @@ class CapriService : Service() {
     private fun speak(text: String) {
         mode = Mode.SPEAKING
         CapriBus.log("🤖 Capri: $text")
+        val clean = text.replace(Regex("[*#_`>|]"), " ").take(3900)
+        val id = ++speakId
+        val key = prefs.apiKey
+        val voiceName = prefs.voice
+        if (key.isBlank() || voiceName.isBlank()) { speakLocal(clean); return }
+
+        setStatus("Pensando na voz...")
+        Thread {
+            val wav = try {
+                GeminiVoice(key, voiceName).synth(clean)
+            } catch (e: Exception) {
+                CapriBus.log("⚠️ ${e.message} (usando a voz do celular)")
+                null
+            }
+            main.post {
+                if (destroyed || id != speakId || mode != Mode.SPEAKING) return@post
+                if (wav == null || !playWav(wav, id)) speakLocal(clean)
+            }
+        }.start()
+    }
+
+    /** Toca o áudio do Gemini; retorna false se não conseguiu (aí cai na voz do celular). */
+    private fun playWav(wav: ByteArray, id: Int): Boolean = try {
+        releasePlayer()
+        val f = java.io.File(cacheDir, "fala.wav")
+        f.writeBytes(wav)
+        player = MediaPlayer().apply {
+            setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            setDataSource(f.absolutePath)
+            setOnCompletionListener { if (id == speakId) { releasePlayer(); afterSpeaking() } }
+            setOnErrorListener { _, what, _ ->
+                if (id == speakId) { CapriBus.log("⚠️ Erro ao tocar a voz do Gemini ($what)"); releasePlayer(); afterSpeaking() }
+                true
+            }
+            prepare()
+            start()
+        }
+        setStatus("Falando...")
+        true
+    } catch (e: Exception) {
+        CapriBus.log("⚠️ Não consegui tocar a voz do Gemini: ${e.message}")
+        releasePlayer()
+        false
+    }
+
+    private fun releasePlayer() {
+        player?.let { try { it.release() } catch (_: Exception) {} }
+        player = null
+    }
+
+    private fun speakLocal(text: String) {
         setStatus("Falando...")
         val t = tts
         if (!ttsReady || t == null) { listenForWake(); return }
-        val clean = text.replace(Regex("[*#_`>|]"), " ").take(3900)
-        t.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "capri-${System.currentTimeMillis()}")
+        t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "capri-${System.currentTimeMillis()}")
     }
 
     private fun afterSpeaking() {
@@ -411,6 +470,7 @@ class CapriService : Service() {
         stopVosk()
         destroyAndroidRecognizer()
         try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
+        releasePlayer()
         try { model?.close() } catch (_: Exception) {}
         try { tone?.release() } catch (_: Exception) {}
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}

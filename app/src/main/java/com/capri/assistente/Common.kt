@@ -31,6 +31,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("wakeWords", DEFAULT_WAKE) ?: DEFAULT_WAKE
         set(v) = sp.edit().putString("wakeWords", v).apply()
 
+    /** Voz do Gemini (ex.: "Kore"). Vazio = usar a voz do próprio celular. */
+    var voice: String
+        get() = sp.getString("voice", DEFAULT_VOICE) ?: DEFAULT_VOICE
+        set(v) = sp.edit().putString("voice", v.trim()).apply()
+
     fun wakeList(): List<String> =
         wakeWords.split(",").map { normalize(it) }.filter { it.isNotBlank() }
 
@@ -51,6 +56,7 @@ class Prefs(ctx: Context) {
     companion object {
         const val DEFAULT_MODEL = "gemini-flash-latest"
         const val DEFAULT_WAKE = "capri, cabri, capre, kapri, caprin"
+        const val DEFAULT_VOICE = "Kore"
     }
 }
 
