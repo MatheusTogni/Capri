@@ -1,11 +1,13 @@
 package com.capri.assistente
 
+import android.content.Context
 import android.graphics.Canvas
 import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
+import android.widget.FrameLayout
 
 /** Paleta tirada da própria Capri: vermelho, verde-neon, roxo e preto. */
 object Neon {
@@ -74,4 +76,38 @@ class CutDrawable(
 
     @Deprecated("Deprecated in Java")
     override fun getOpacity() = PixelFormat.TRANSLUCENT
+}
+
+/**
+ * Moldura com os mesmos cantos cortados do [CutDrawable]: recorta o conteúdo (ex.: uma imagem)
+ * nesse formato e desenha a borda por cima, para nada vazar nos cantos cortados.
+ */
+class CutFrameLayout(
+    ctx: Context,
+    private val cut: Float,
+    stroke: Int,
+    private val strokeWidth: Float,
+) : FrameLayout(ctx) {
+
+    private val clip = Path()
+    private val border = CutDrawable(0, stroke, strokeWidth, cut)
+
+    override fun dispatchDraw(canvas: Canvas) {
+        val h = strokeWidth / 2
+        val r = width - h; val b = height - h
+        clip.reset()
+        clip.moveTo(h + cut, h)
+        clip.lineTo(r, h)
+        clip.lineTo(r, b - cut)
+        clip.lineTo(r - cut, b)
+        clip.lineTo(h, b)
+        clip.lineTo(h, h + cut)
+        clip.close()
+        canvas.save()
+        canvas.clipPath(clip)
+        super.dispatchDraw(canvas)
+        canvas.restore()
+        border.setBounds(0, 0, width, height)
+        border.draw(canvas)
+    }
 }

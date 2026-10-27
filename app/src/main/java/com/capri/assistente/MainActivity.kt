@@ -164,8 +164,9 @@ class MainActivity : NeonActivity() {
 
     /** Imagem da Capri com moldura neon, o nome por cima e a engrenagem no canto. */
     private fun hero(): View {
-        val frame = FrameLayout(this).apply {
-            background = CutDrawable(Neon.BG, Neon.GREEN, dp(2).toFloat(), dp(18).toFloat())
+        // recorta a imagem nos cantos cortados e desenha a borda verde por cima
+        val frame = CutFrameLayout(this, dp(18).toFloat(), Neon.GREEN, dp(2).toFloat()).apply {
+            background = CutDrawable(Neon.BG, cut = dp(18).toFloat())
             setPadding(dp(3), dp(3), dp(3), dp(3))
         }
         frame.addView(ImageView(this).apply {
