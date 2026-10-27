@@ -91,12 +91,22 @@ class SettingsActivity : NeonActivity() {
             addView(testButton, LinearLayout.LayoutParams(WRAP_CONTENT, dp(46)).apply { marginStart = dp(8) })
         }, blockParams(dp(6)))
 
+        root.addView(label("Conversa"))
+        var conversation = prefs.conversationMode
+        root.addView(toggle("Modo conversa (ouvir de novo após responder)", conversation) { conversation = it },
+            LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(6) })
+        var bargeIn = prefs.bargeIn
+        root.addView(toggle("Interromper dizendo a palavra de ativação", bargeIn) { bargeIn = it },
+            LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(8) })
+
         root.addView(neonButton("Salvar configurações", Neon.GREEN).apply {
             setOnClickListener {
                 prefs.apiKey = keyInput.text.toString()
                 prefs.model = modelInput.text.toString()
                 prefs.wakeWords = wakeInput.text.toString()
                 prefs.voice = selectedVoice
+                prefs.conversationMode = conversation
+                prefs.bargeIn = bargeIn
                 Toast.makeText(this@SettingsActivity, "Salvo!", Toast.LENGTH_SHORT).show()
                 finish()
             }
@@ -141,6 +151,23 @@ class SettingsActivity : NeonActivity() {
     override fun onDestroy() {
         releaseTestPlayer()
         super.onDestroy()
+    }
+
+    /** Botão liga/desliga: verde com ◉ quando ligado, apagado com ○ quando desligado. */
+    private fun toggle(title: String, initial: Boolean, onChange: (Boolean) -> Unit): Button {
+        var on = initial
+        return neonButton("", Neon.GREEN).apply {
+            isAllCaps = false
+            textSize = 13f
+            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            setPadding(dp(14), 0, dp(14), 0)
+            fun refresh() {
+                text = (if (on) "◉  " else "○  ") + title
+                styleButton(this, if (on) Neon.GREEN else Neon.MUTED, filled = false)
+            }
+            refresh()
+            setOnClickListener { on = !on; refresh(); onChange(on) }
+        }
     }
 
     // "" = voz do próprio celular (sem Gemini)

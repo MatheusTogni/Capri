@@ -64,6 +64,8 @@ class CapriService : Service() {
     private var speakId = 0 // invalida áudios do Gemini que chegarem atrasados
     private var pendingCall: WhatsApp.Contact? = null // liga quando terminar de falar
     private var pendingChoice: List<WhatsApp.Contact>? = null // "qual deles?" aguardando resposta
+    private var followUp = false // ouvindo sem palavra de ativação logo depois de responder (modo conversa)
+    private var speakingNorm = "" // o que ela está falando, para não se interromper com a própria voz
     private var gemini: Gemini? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var tone: ToneGenerator? = null
@@ -151,7 +153,7 @@ class CapriService : Service() {
     }
 
     /** Retorna false se não conseguiu abrir o microfone (e agenda nova tentativa). */
-    private fun startVosk(question: Boolean): Boolean {
+    private fun startVosk(question: Boolean, timeoutMs: Int = 10_000): Boolean {
         val m = model ?: return false
         session++
         val id = session
@@ -161,7 +163,7 @@ class CapriService : Service() {
             val svc = SpeechService(rec, 16000f)
             speechService = svc
             val listener = VoskListener(id, question)
-            if (question) svc.startListening(listener, 10_000) else svc.startListening(listener)
+            if (question) svc.startListening(listener, timeoutMs) else svc.startListening(listener)
             true
         } catch (e: Exception) {
             CapriBus.log("⚠️ Microfone indisponível: ${e.message}. Tentando de novo...")
@@ -189,7 +191,9 @@ class CapriService : Service() {
     private fun containsWake(text: String): Boolean {
         val t = " " + normalize(text) + " "
         if (t.isBlank()) return false
-        return prefs.wakeList().any { t.contains(" $it ") }
+        // enquanto ela fala, ignora palavras de ativação que estão na própria fala (ex.: "olá")
+        val own = if (mode == Mode.SPEAKING) " $speakingNorm " else ""
+        return prefs.wakeList().any { t.contains(" $it ") && !own.contains(" $it ") }
     }
 
     private inner class VoskListener(val id: Int, val question: Boolean) :
@@ -253,10 +257,13 @@ class CapriService : Service() {
     // ---------- 2. Ouvir a pergunta ----------
 
     private fun onWake() {
+        val interrupted = mode == Mode.SPEAKING
         mode = Mode.ASKING
+        followUp = false
         stopVosk()
+        if (interrupted) stopSpeaking()
         beep(ToneGenerator.TONE_PROP_BEEP)
-        CapriBus.log("✨ Ativada!")
+        CapriBus.log(if (interrupted) "✋ Interrompida!" else "✨ Ativada!")
         setStatus("Pode falar...")
         showBar()
         main.postDelayed({ if (mode == Mode.ASKING) startAndroidRecognizer() }, 300)
@@ -330,11 +337,26 @@ class CapriService : Service() {
         stopVosk()
         mode = Mode.ASKING
         setStatus("Pode falar... (Vosk)")
-        startVosk(question = true)
+        startVosk(question = true, timeoutMs = if (followUp) 6_000 else 10_000)
+    }
+
+    /** Modo conversa: depois de responder, ouve mais uma vez sem precisar da palavra de ativação. */
+    private fun listenForFollowUp() {
+        stopVosk()
+        mode = Mode.ASKING
+        followUp = true
+        setStatus("Pode falar...")
+        main.postDelayed({ if (mode == Mode.ASKING) startAndroidRecognizer() }, 250)
     }
 
     private fun noQuestion() {
         pendingChoice = null
+        if (followUp) {
+            // silêncio depois da resposta: a conversa acabou, volta a esperar o "Capri" sem alarde
+            followUp = false
+            listenForWake()
+            return
+        }
         CapriBus.log("🤷 Não ouvi nenhuma pergunta.")
         beep(ToneGenerator.TONE_PROP_NACK)
         main.postDelayed({ listenForWake() }, 400)
@@ -344,6 +366,7 @@ class CapriService : Service() {
 
     private fun handleQuestion(q: String) {
         mode = Mode.THINKING
+        followUp = false
         CapriBus.log("🗣️ Você: $q")
         setStatus("Pensando...")
 
@@ -354,6 +377,9 @@ class CapriService : Service() {
             if (c == null) speak("Não entendi qual deles. Pode pedir de novo.") else startCall(c)
             return
         }
+
+        // pedidos simples (lanterna, volume, hora, timer) nem passam pelo Gemini
+        LocalCommands.parse(q)?.let { runCommand(it); return }
 
         val key = prefs.apiKey
         if (key.isBlank()) {
@@ -376,6 +402,7 @@ class CapriService : Service() {
             }
             when (reply) {
                 is Gemini.Reply.Text -> main.post { if (!destroyed) speak(reply.text) }
+                is Gemini.Reply.Action -> main.post { if (!destroyed) runCommand(reply.command) }
                 is Gemini.Reply.WhatsAppCall -> {
                     // null = sem permissão de contatos
                     val found = try { WhatsApp.find(this, reply.contact, reply.video) } catch (_: SecurityException) { null }
@@ -383,6 +410,25 @@ class CapriService : Service() {
                 }
             }
         }.start()
+    }
+
+    // ---------- 3a. Comandos no celular ----------
+
+    private fun runCommand(c: Command) {
+        // timer/alarme abrem o app de relógio: com o app fechado precisa de "aparecer sobre outros apps"
+        if (c.opensApp && !Settings.canDrawOverlays(this) && !CapriBus.uiVisible) {
+            speak("Para isso com o aplicativo fechado, preciso da permissão de aparecer sobre outros apps. Ativa nas configurações da Capri.")
+            return
+        }
+        CapriBus.log("⚡ Comando: ${c.javaClass.simpleName}")
+        val answer = CommandRunner(this).run(c)
+        if (answer.isBlank()) {
+            // ex.: volume no mudo — não tem o que falar
+            mode = Mode.SPEAKING
+            afterSpeaking()
+        } else {
+            speak(answer)
+        }
     }
 
     // ---------- 3b. Ligação pelo WhatsApp ----------
@@ -412,6 +458,7 @@ class CapriService : Service() {
     }
 
     private fun launchCall(c: WhatsApp.Contact) {
+        stopVosk()
         hideBar()
         try {
             WhatsApp.call(this, c)
@@ -426,6 +473,7 @@ class CapriService : Service() {
     }
 
     private fun listenForChoice() {
+        stopVosk()
         mode = Mode.ASKING
         beep(ToneGenerator.TONE_PROP_BEEP)
         setStatus("Pode falar...")
@@ -460,6 +508,9 @@ class CapriService : Service() {
         CapriBus.log("🤖 Capri: $text")
         val clean = text.replace(Regex("[*#_`>|]"), " ").take(3900)
         val id = ++speakId
+        speakingNorm = normalize(clean)
+        // interromper: enquanto fala, o Vosk continua ouvindo só a palavra de ativação
+        if (prefs.bargeIn) { stopVosk(); startVosk(question = false) }
         val key = prefs.apiKey
         val voiceName = prefs.voice
         val quotaOver = System.currentTimeMillis() < prefs.voiceBlockedUntil
@@ -531,7 +582,16 @@ class CapriService : Service() {
         if (mode != Mode.SPEAKING || destroyed) return
         pendingCall?.let { c -> pendingCall = null; launchCall(c); return }
         if (pendingChoice != null) { listenForChoice(); return }
-        listenForWake()
+        if (prefs.conversationMode) listenForFollowUp() else listenForWake()
+    }
+
+    /** Corta a fala no meio (quando dizem "Capri" enquanto ela fala). */
+    private fun stopSpeaking() {
+        speakId++ // descarta áudio do Gemini que ainda esteja chegando
+        pendingCall = null // "Ligando para..." interrompido = ligação cancelada
+        pendingChoice = null
+        try { tts?.stop() } catch (_: Exception) {}
+        releasePlayer()
     }
 
     // ---------- barrinha "ouvindo" ----------

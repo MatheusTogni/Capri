@@ -10,6 +10,8 @@
     <!-- Ligações pelo WhatsApp: achar o contato e abrir a chamada com o app em segundo plano -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Timer e alarme no app de relógio (o Android concede sem perguntar) -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
     <!-- Necessário no Android 11+ para enxergar o reconhecedor de voz e o leitor de texto -->
     <queries>

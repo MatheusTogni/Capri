@@ -19,6 +19,7 @@ class Gemini(val apiKey: String, val model: String) {
     sealed class Reply {
         data class Text(val text: String) : Reply()
         data class WhatsAppCall(val contact: String, val video: Boolean) : Reply()
+        data class Action(val command: Command) : Reply()
     }
 
     private val history = mutableListOf<Pair<String, String>>() // (role, texto)
@@ -34,13 +35,10 @@ class Gemini(val apiKey: String, val model: String) {
                     .put("parts", JSONArray().put(JSONObject().put("text", text)))
             )
         }
-        val now = SimpleDateFormat("EEEE, d 'de' MMMM 'de' yyyy, HH:mm", Locale("pt", "BR")).format(Date())
         val body = JSONObject()
-            .put("system_instruction", JSONObject().put("parts", JSONArray().put(
-                JSONObject().put("text", "$SYSTEM\nAgora é $now (relógio do celular).")
-            )))
+            .put("system_instruction", systemObj("$STYLE\n$ACTIONS\n${clock()}"))
             .put("contents", contents)
-            .put("tools", JSONArray().put(JSONObject().put("functionDeclarations", JSONArray().put(callTool()))))
+            .put("tools", JSONArray().put(JSONObject().put("functionDeclarations", tools())))
 
         try {
             val resp = postWithRetry(body)
@@ -51,22 +49,29 @@ class Gemini(val apiKey: String, val model: String) {
 
             for (i in 0 until parts.length()) {
                 val fc = parts.getJSONObject(i).optJSONObject("functionCall") ?: continue
-                if (fc.optString("name") != CALL_TOOL) continue
                 val args = fc.optJSONObject("args") ?: JSONObject()
-                val contact = args.optString("contato").trim()
-                if (contact.isBlank()) continue
                 // no histórico fica só um texto, para a conversa continuar fazendo sentido
-                remember("Ok, vou ligar para $contact pelo WhatsApp.")
-                return Reply.WhatsAppCall(contact, args.optBoolean("video", false))
+                when (val name = fc.optString("name")) {
+                    CALL_TOOL -> {
+                        val contact = args.optString("contato").trim()
+                        if (contact.isBlank()) continue
+                        remember("Ok, vou ligar para $contact pelo WhatsApp.")
+                        return Reply.WhatsAppCall(contact, args.optBoolean("video", false))
+                    }
+                    SEARCH_TOOL -> {
+                        val answer = search(question, args.optString("consulta").ifBlank { question })
+                        remember(answer)
+                        return Reply.Text(answer)
+                    }
+                    else -> {
+                        val cmd = toCommand(name, args) ?: continue
+                        remember("Ok, feito.")
+                        return Reply.Action(cmd)
+                    }
+                }
             }
 
-            val sb = StringBuilder()
-            for (i in 0 until parts.length()) {
-                val p = parts.getJSONObject(i)
-                if (!p.optBoolean("thought", false)) sb.append(p.optString("text"))
-            }
-            val answer = sb.toString().trim().ifBlank { "Não tenho uma resposta para isso." }
-
+            val answer = textOf(parts).ifBlank { "Não tenho uma resposta para isso." }
             remember(answer)
             return Reply.Text(answer)
         } catch (e: Exception) {
@@ -81,20 +86,89 @@ class Gemini(val apiKey: String, val model: String) {
         while (history.size > 20) { history.removeAt(0); history.removeAt(0) }
     }
 
-    /** Ação que o Gemini pode pedir: ligação (ou vídeo) pelo WhatsApp. */
-    private fun callTool() = JSONObject()
-        .put("name", CALL_TOOL)
-        .put("description", "Faz uma ligação de voz ou chamada de vídeo pelo WhatsApp para um contato da agenda do celular.")
-        .put("parameters", JSONObject()
-            .put("type", "OBJECT")
-            .put("properties", JSONObject()
-                .put("contato", JSONObject()
-                    .put("type", "STRING")
-                    .put("description", "Nome do contato do jeito que o usuário falou, ex.: \"João\", \"mãe\", \"Ana da academia\"."))
-                .put("video", JSONObject()
-                    .put("type", "BOOLEAN")
-                    .put("description", "true se o usuário pediu chamada de vídeo; false para ligação de voz.")))
-            .put("required", JSONArray().put("contato")))
+    private fun clock(): String =
+        "Agora é " + SimpleDateFormat("EEEE, d 'de' MMMM 'de' yyyy, HH:mm", Locale("pt", "BR")).format(Date()) +
+            " (relógio do celular)."
+
+    private fun systemObj(text: String) =
+        JSONObject().put("parts", JSONArray().put(JSONObject().put("text", text)))
+
+    private fun textOf(parts: JSONArray): String {
+        val sb = StringBuilder()
+        for (i in 0 until parts.length()) {
+            val p = parts.getJSONObject(i)
+            if (!p.optBoolean("thought", false)) sb.append(p.optString("text"))
+        }
+        return sb.toString().trim()
+    }
+
+    /**
+     * Pesquisa no Google. Nos modelos Gemini 3+ a busca não existe no plano gratuito,
+     * então a pergunta vai para o gemini-2.5-flash (500 pesquisas grátis por dia).
+     */
+    private fun search(question: String, query: String): String {
+        val body = JSONObject()
+            .put("system_instruction", systemObj("$STYLE\nUse a busca do Google para responder com informação atual.\n${clock()}"))
+            .put("contents", JSONArray().put(JSONObject()
+                .put("role", "user")
+                .put("parts", JSONArray().put(JSONObject().put("text", "$question\n(pesquisar: $query)")))))
+            .put("tools", JSONArray().put(JSONObject().put("google_search", JSONObject())))
+        return try {
+            CapriBus.log("🔎 Pesquisando: $query")
+            val resp = post(SEARCH_MODEL, body, readTimeout = 25_000)
+            val parts = JSONObject(resp).getJSONArray("candidates").getJSONObject(0)
+                .getJSONObject("content").getJSONArray("parts")
+            textOf(parts).ifBlank { "Não achei nada sobre isso." }
+        } catch (e: Exception) {
+            CapriBus.log("⚠️ Pesquisa falhou: ${e.message}")
+            "Não consegui pesquisar agora. Tenta de novo daqui a pouco."
+        }
+    }
+
+    private fun toCommand(name: String, a: JSONObject): Command? = when (name) {
+        "lanterna" -> Command.Torch(a.optBoolean("ligar", true))
+        "volume" -> a.optString("acao").takeIf { it in setOf("aumentar", "diminuir", "maximo", "mudo") }
+            ?.let { Command.Volume(it) }
+        "timer" -> a.optInt("segundos", 0).takeIf { it > 0 }?.let { Command.Timer(it) }
+        "alarme" -> {
+            val h = a.optInt("hora", -1); val m = a.optInt("minuto", 0)
+            if (h in 0..23 && m in 0..59) Command.Alarm(h, m, a.optString("descricao").trim()) else null
+        }
+        else -> null
+    }
+
+    /** Ações que o Gemini pode pedir em vez de responder com texto. */
+    private fun tools() = JSONArray()
+        .put(tool(CALL_TOOL, "Faz uma ligação de voz ou chamada de vídeo pelo WhatsApp para um contato da agenda do celular.",
+            listOf("contato"),
+            "contato" to prop("STRING", "Nome do contato do jeito que o usuário falou, ex.: \"João\", \"mãe\", \"Ana da academia\"."),
+            "video" to prop("BOOLEAN", "true se o usuário pediu chamada de vídeo; false para ligação de voz.")))
+        .put(tool(SEARCH_TOOL, "Pesquisa no Google informação atual: clima, notícias, resultados de jogos, preços, eventos recentes.",
+            listOf("consulta"),
+            "consulta" to prop("STRING", "O que pesquisar, em poucas palavras.")))
+        .put(tool("lanterna", "Liga ou desliga a lanterna do celular.", listOf("ligar"),
+            "ligar" to prop("BOOLEAN", "true para ligar, false para desligar.")))
+        .put(tool("volume", "Muda o volume de mídia do celular.", listOf("acao"),
+            "acao" to prop("STRING", "Uma destas: aumentar, diminuir, maximo, mudo.")))
+        .put(tool("timer", "Inicia um timer (contagem regressiva) no app de relógio.", listOf("segundos"),
+            "segundos" to prop("INTEGER", "Duração total em segundos.")))
+        .put(tool("alarme", "Cria um alarme no app de relógio. Use também para lembretes (\"me lembra de X às 20h\"); só aceita a próxima vez que esse horário chegar.",
+            listOf("hora", "minuto"),
+            "hora" to prop("INTEGER", "Hora de 0 a 23."),
+            "minuto" to prop("INTEGER", "Minuto de 0 a 59."),
+            "descricao" to prop("STRING", "Texto do lembrete, ex.: \"tomar remédio\". Vazio para despertador.")))
+
+    private fun prop(type: String, description: String) =
+        JSONObject().put("type", type).put("description", description)
+
+    private fun tool(name: String, description: String, required: List<String>, vararg props: Pair<String, JSONObject>) =
+        JSONObject()
+            .put("name", name)
+            .put("description", description)
+            .put("parameters", JSONObject()
+                .put("type", "OBJECT")
+                .put("properties", JSONObject().apply { props.forEach { (k, v) -> put(k, v) } })
+                .put("required", JSONArray(required)))
 
     /**
      * Tenta o modelo escolhido e, se ele estiver sobrecarregado ou demorar demais,
@@ -117,29 +191,29 @@ class Gemini(val apiKey: String, val model: String) {
     }
 
     /** Pede pouco "raciocínio" (resposta bem mais rápida); se o modelo não aceitar, manda sem. */
-    private fun post(m: String, body: JSONObject): String {
+    private fun post(m: String, body: JSONObject, readTimeout: Int = 15_000): String {
         if (m !in noThinkingConfig) {
             val fast = JSONObject(body.toString())
                 .put("generationConfig", JSONObject().put("thinkingConfig", JSONObject().put("thinkingLevel", "low")))
             try {
-                return send(m, fast.toString())
+                return send(m, fast.toString(), readTimeout)
             } catch (e: BadThinkingConfig) {
                 noThinkingConfig.add(m)
             }
         }
-        return send(m, body.toString())
+        return send(m, body.toString(), readTimeout)
     }
 
     private class BadThinkingConfig : IOException()
 
-    private fun send(m: String, body: String): String {
+    private fun send(m: String, body: String, readTimeout: Int): String {
         val conn = URL("https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent")
             .openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 10_000
             // resposta de voz é curta: se passar disso, melhor tentar o modelo reserva
-            conn.readTimeout = 15_000
+            conn.readTimeout = readTimeout
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             conn.setRequestProperty("x-goog-api-key", apiKey)
@@ -168,17 +242,23 @@ class Gemini(val apiKey: String, val model: String) {
         private val noThinkingConfig = java.util.Collections.synchronizedSet(mutableSetOf<String>())
         private val RETRY_CODES = setOf(429, 500, 502, 503, 504)
         private const val CALL_TOOL = "ligar_whatsapp"
+        private const val SEARCH_TOOL = "pesquisar_na_web"
+        private const val SEARCH_MODEL = "gemini-2.5-flash"
         private val FALLBACK_MODELS = listOf("gemini-flash-lite-latest", "gemini-2.5-flash")
 
-        const val SYSTEM = """Você é a Capri, uma assistente de voz que fala português do Brasil.
+        /** Jeito de falar (vale também para a pesquisa). */
+        const val STYLE = """Você é a Capri, uma assistente de voz que fala português do Brasil.
 Suas respostas serão lidas em voz alta por um sintetizador de voz, então:
 - responda de forma curta e natural, normalmente em 1 a 3 frases;
 - nunca use markdown, listas, asteriscos, emojis, tabelas ou links;
 - escreva números e siglas de um jeito fácil de falar;
-- para data e hora, use o relógio do celular informado no fim destas instruções;
-- se a pergunta depender de informação em tempo real que você não tem (clima, notícias de hoje), diga isso com sinceridade.
-Quando pedirem para ligar ou fazer chamada de vídeo para alguém, use a função ligar_whatsapp.
-Você só liga pelo WhatsApp; não existe ligação telefônica comum.
+- para data e hora, use o relógio do celular informado no fim destas instruções.
 Seja simpática e direta."""
+
+        const val ACTIONS = """Você consegue agir no celular usando as funções disponíveis:
+- ligar ou fazer chamada de vídeo: ligar_whatsapp (você só liga pelo WhatsApp; não existe ligação telefônica comum);
+- clima, notícias, resultados de jogos ou qualquer coisa atual: pesquisar_na_web;
+- lanterna, volume, timer, alarme e lembretes: as funções com esses nomes.
+Se o pedido não precisar de nenhuma função, só responda."""
     }
 }

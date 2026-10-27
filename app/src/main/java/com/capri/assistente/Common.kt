@@ -41,6 +41,16 @@ class Prefs(ctx: Context) {
         get() = sp.getString("voice", DEFAULT_VOICE) ?: DEFAULT_VOICE
         set(v) = sp.edit().putString("voice", v.trim()).apply()
 
+    /** Depois de responder, ouve mais uma vez sem precisar da palavra de ativação. */
+    var conversationMode: Boolean
+        get() = sp.getBoolean("conversationMode", true)
+        set(v) = sp.edit().putBoolean("conversationMode", v).apply()
+
+    /** Dizer a palavra de ativação enquanto ela fala faz ela parar e ouvir. */
+    var bargeIn: Boolean
+        get() = sp.getBoolean("bargeIn", true)
+        set(v) = sp.edit().putBoolean("bargeIn", v).apply()
+
     fun wakeList(): List<String> =
         wakeWords.split(",").map { normalize(it) }.filter { it.isNotBlank() }
 
