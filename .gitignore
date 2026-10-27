@@ -1,0 +1,7 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+# o modelo de voz é baixado pelo GitHub Actions na hora do build
+app/src/main/assets/model/
