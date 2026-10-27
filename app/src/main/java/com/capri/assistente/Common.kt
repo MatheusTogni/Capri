@@ -27,6 +27,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("model", DEFAULT_MODEL)?.ifBlank { DEFAULT_MODEL } ?: DEFAULT_MODEL
         set(v) = sp.edit().putString("model", v.trim()).apply()
 
+    /** Até quando não vale a pena chamar a voz do Gemini (cota diária esgotada). */
+    var voiceBlockedUntil: Long
+        get() = sp.getLong("voiceBlockedUntil", 0L)
+        set(v) = sp.edit().putLong("voiceBlockedUntil", v).apply()
+
     var wakeWords: String
         get() = sp.getString("wakeWords", DEFAULT_WAKE) ?: DEFAULT_WAKE
         set(v) = sp.edit().putString("wakeWords", v).apply()

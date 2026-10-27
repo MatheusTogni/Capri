@@ -45,6 +45,7 @@ class GeminiVoice(val apiKey: String, val voice: String) {
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val resp = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+            if (code == 429) throw QuotaException(retryAfterMs(resp))
             if (code !in 200..299) {
                 throw IOException("Voz do Gemini respondeu HTTP $code: ${resp.take(300)}")
             }
@@ -56,6 +57,20 @@ class GeminiVoice(val apiKey: String, val voice: String) {
         } finally {
             conn.disconnect()
         }
+    }
+
+    /** Cota da voz acabou (o plano gratuito tem poucas falas por dia). */
+    class QuotaException(val retryAfterMs: Long) : IOException("Cota da voz do Gemini acabou")
+
+    /** Lê o "Please retry in 10h58m10s" da mensagem de erro; sem isso, espera 1 hora. */
+    private fun retryAfterMs(resp: String): Long {
+        val m = Regex("""retry in\s*(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)s)?""", RegexOption.IGNORE_CASE).find(resp)
+            ?: return 3_600_000L
+        val h = m.groupValues[1].toLongOrNull() ?: 0
+        val min = m.groupValues[2].toLongOrNull() ?: 0
+        val s = m.groupValues[3].toDoubleOrNull() ?: 0.0
+        val total = ((h * 3600 + min * 60) * 1000 + (s * 1000).toLong())
+        return if (total > 0) total else 3_600_000L
     }
 
     /** O áudio vem em base64 em steps[].content[] com type "audio"; pega o último. */

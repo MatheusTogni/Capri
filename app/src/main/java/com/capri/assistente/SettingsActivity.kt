@@ -181,7 +181,7 @@ class SettingsActivity : NeonActivity() {
                 if (isDestroyed) return@runOnUiThread
                 button.isEnabled = true
                 button.text = "▶ Testar"
-                result.onSuccess { playTest(it) }.onFailure {
+                result.onSuccess { prefs.voiceBlockedUntil = 0L; playTest(it) }.onFailure {
                     Toast.makeText(this, "Não deu para testar: ${it.message?.take(150)}", Toast.LENGTH_LONG).show()
                 }
             }

@@ -462,12 +462,19 @@ class CapriService : Service() {
         val id = ++speakId
         val key = prefs.apiKey
         val voiceName = prefs.voice
-        if (key.isBlank() || voiceName.isBlank()) { speakLocal(clean); return }
+        val quotaOver = System.currentTimeMillis() < prefs.voiceBlockedUntil
+        if (key.isBlank() || voiceName.isBlank() || quotaOver) { speakLocal(clean); return }
 
         setStatus("Pensando na voz...")
         Thread {
             val wav = try {
                 GeminiVoice(key, voiceName).synth(clean)
+            } catch (e: GeminiVoice.QuotaException) {
+                val until = System.currentTimeMillis() + e.retryAfterMs
+                prefs.voiceBlockedUntil = until
+                val hora = java.text.SimpleDateFormat("HH:mm", Locale("pt", "BR")).format(java.util.Date(until))
+                CapriBus.log("⏳ Cota diária da voz do Gemini acabou. Usando a voz do celular até $hora.")
+                null
             } catch (e: Exception) {
                 CapriBus.log("⚠️ ${e.message} (usando a voz do celular)")
                 null

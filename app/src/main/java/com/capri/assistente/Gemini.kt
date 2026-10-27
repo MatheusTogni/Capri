@@ -4,7 +4,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** O Google está sem capacidade agora (429/5xx); não é problema da chave nem do app. */
 class GeminiBusyException(msg: String) : IOException(msg)
@@ -30,11 +34,13 @@ class Gemini(val apiKey: String, val model: String) {
                     .put("parts", JSONArray().put(JSONObject().put("text", text)))
             )
         }
+        val now = SimpleDateFormat("EEEE, d 'de' MMMM 'de' yyyy, HH:mm", Locale("pt", "BR")).format(Date())
         val body = JSONObject()
-            .put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", SYSTEM))))
+            .put("system_instruction", JSONObject().put("parts", JSONArray().put(
+                JSONObject().put("text", "$SYSTEM\nAgora é $now (relógio do celular).")
+            )))
             .put("contents", contents)
             .put("tools", JSONArray().put(JSONObject().put("functionDeclarations", JSONArray().put(callTool()))))
-            .toString()
 
         try {
             val resp = postWithRetry(body)
@@ -91,17 +97,17 @@ class Gemini(val apiKey: String, val model: String) {
             .put("required", JSONArray().put("contato")))
 
     /**
-     * Tenta o modelo escolhido (2 vezes) e, se ele estiver sobrecarregado,
-     * cai para os modelos reserva. Erros que não são de sobrecarga sobem na hora.
+     * Tenta o modelo escolhido e, se ele estiver sobrecarregado ou demorar demais,
+     * cai para os modelos reserva. Outros erros sobem na hora.
      */
-    private fun postWithRetry(body: String): String {
-        val attempts = listOf(model, model) + FALLBACK_MODELS.filter { it != model }
+    private fun postWithRetry(body: JSONObject): String {
+        val attempts = listOf(model) + FALLBACK_MODELS.filter { it != model }
         var last: GeminiBusyException? = null
         for ((i, m) in attempts.withIndex()) {
-            if (i > 0) Thread.sleep(if (m == model) 1_500L else 500L)
+            if (i > 0) Thread.sleep(300L)
             try {
                 val resp = post(m, body)
-                if (m != model) CapriBus.log("↪️ $model sobrecarregado, respondi com $m")
+                if (m != model) CapriBus.log("↪️ $model indisponível (${last?.message}), respondi com $m")
                 return resp
             } catch (e: GeminiBusyException) {
                 last = e
@@ -110,13 +116,30 @@ class Gemini(val apiKey: String, val model: String) {
         throw last!!
     }
 
-    private fun post(m: String, body: String): String {
+    /** Pede pouco "raciocínio" (resposta bem mais rápida); se o modelo não aceitar, manda sem. */
+    private fun post(m: String, body: JSONObject): String {
+        if (m !in noThinkingConfig) {
+            val fast = JSONObject(body.toString())
+                .put("generationConfig", JSONObject().put("thinkingConfig", JSONObject().put("thinkingLevel", "low")))
+            try {
+                return send(m, fast.toString())
+            } catch (e: BadThinkingConfig) {
+                noThinkingConfig.add(m)
+            }
+        }
+        return send(m, body.toString())
+    }
+
+    private class BadThinkingConfig : IOException()
+
+    private fun send(m: String, body: String): String {
         val conn = URL("https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent")
             .openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 60_000
+            conn.connectTimeout = 10_000
+            // resposta de voz é curta: se passar disso, melhor tentar o modelo reserva
+            conn.readTimeout = 15_000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             conn.setRequestProperty("x-goog-api-key", apiKey)
@@ -128,16 +151,21 @@ class Gemini(val apiKey: String, val model: String) {
             if (code in RETRY_CODES) {
                 throw GeminiBusyException("Gemini sobrecarregado (HTTP $code em $m). Tente de novo daqui a pouco.")
             }
+            if (code == 400 && resp.contains("thinking", ignoreCase = true)) throw BadThinkingConfig()
             if (code !in 200..299) {
                 throw IOException("Gemini respondeu HTTP $code: ${resp.take(300)}")
             }
             return resp
+        } catch (e: SocketTimeoutException) {
+            throw GeminiBusyException("Gemini demorou demais para responder ($m).")
         } finally {
             conn.disconnect()
         }
     }
 
     companion object {
+        /** Modelos que recusaram o thinkingConfig (não tenta de novo enquanto o app estiver aberto). */
+        private val noThinkingConfig = java.util.Collections.synchronizedSet(mutableSetOf<String>())
         private val RETRY_CODES = setOf(429, 500, 502, 503, 504)
         private const val CALL_TOOL = "ligar_whatsapp"
         private val FALLBACK_MODELS = listOf("gemini-flash-lite-latest", "gemini-2.5-flash")
@@ -147,7 +175,8 @@ Suas respostas serão lidas em voz alta por um sintetizador de voz, então:
 - responda de forma curta e natural, normalmente em 1 a 3 frases;
 - nunca use markdown, listas, asteriscos, emojis, tabelas ou links;
 - escreva números e siglas de um jeito fácil de falar;
-- se a pergunta depender de informação em tempo real que você não tem (hora exata, clima, notícias de hoje), diga isso com sinceridade.
+- para data e hora, use o relógio do celular informado no fim destas instruções;
+- se a pergunta depender de informação em tempo real que você não tem (clima, notícias de hoje), diga isso com sinceridade.
 Quando pedirem para ligar ou fazer chamada de vídeo para alguém, use a função ligar_whatsapp.
 Você só liga pelo WhatsApp; não existe ligação telefônica comum.
 Seja simpática e direta."""
