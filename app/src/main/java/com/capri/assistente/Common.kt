@@ -68,10 +68,17 @@ object CapriBus {
     var status = "Desligada"; private set
     var heard = ""; private set
     @Volatile var running = false
+    /** Tela principal aberta: aí o Android deixa o serviço abrir outro app sem permissão especial. */
+    @Volatile var uiVisible = false
 
     var onChange: (() -> Unit)? = null
 
-    fun status(s: String) = main.post { status = s; onChange?.invoke() }
+    /** Barrinha "ouvindo" visível (a BarActivity fecha quando vira false). */
+    @Volatile var barVisible = false
+    var onBar: (() -> Unit)? = null
+
+    fun status(s: String) = main.post { status = s; onChange?.invoke(); onBar?.invoke() }
+    fun bar(visible: Boolean) { barVisible = visible; main.post { onBar?.invoke() } }
     fun heard(s: String) = main.post { heard = s; onChange?.invoke() }
     fun log(s: String) = main.post {
         lines.addFirst(s)

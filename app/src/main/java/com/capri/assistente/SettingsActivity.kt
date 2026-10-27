@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Typeface
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
@@ -24,6 +25,7 @@ class SettingsActivity : NeonActivity() {
 
     private lateinit var prefs: Prefs
     private var testPlayer: MediaPlayer? = null
+    private lateinit var overlayButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -110,11 +112,30 @@ class SettingsActivity : NeonActivity() {
             }
         }, LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(10) })
 
+        // sem isso não aparece a barrinha "ouvindo" e o Android bloqueia abrir o WhatsApp em segundo plano
+        overlayButton = neonButton("", Neon.PURPLE).apply {
+            setOnClickListener {
+                try {
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                } catch (e: Exception) {
+                    startActivity(Intent(Settings.ACTION_SETTINGS))
+                }
+            }
+        }
+        root.addView(overlayButton, LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(10) })
+
         setContentView(ScrollView(this).apply {
             setBackgroundColor(Neon.BG)
             isFillViewport = true
             addView(root)
         })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // atualiza ao voltar da tela de permissão do Android
+        overlayButton.text = if (Settings.canDrawOverlays(this)) "✓ Aparecer sobre outros apps liberado"
+                             else "Liberar aparecer sobre outros apps"
     }
 
     override fun onDestroy() {

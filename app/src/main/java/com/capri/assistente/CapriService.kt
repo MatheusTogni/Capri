@@ -1,5 +1,6 @@
 package com.capri.assistente
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.PixelFormat
 import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.AudioManager
@@ -18,10 +20,13 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.view.Gravity
+import android.view.WindowManager
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
@@ -38,7 +43,7 @@ import java.util.Locale
  */
 class CapriService : Service() {
 
-    private enum class Mode { LOADING, WAKE, ASKING, THINKING, SPEAKING }
+    private enum class Mode { LOADING, WAKE, ASKING, THINKING, SPEAKING, PAUSED }
 
     private val main = Handler(Looper.getMainLooper())
     private lateinit var prefs: Prefs
@@ -57,6 +62,8 @@ class CapriService : Service() {
     private var ttsReady = false
     private var player: MediaPlayer? = null
     private var speakId = 0 // invalida áudios do Gemini que chegarem atrasados
+    private var pendingCall: WhatsApp.Contact? = null // liga quando terminar de falar
+    private var pendingChoice: List<WhatsApp.Contact>? = null // "qual deles?" aguardando resposta
     private var gemini: Gemini? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var tone: ToneGenerator? = null
@@ -117,6 +124,7 @@ class CapriService : Service() {
                     model = m
                     CapriBus.log("✅ Capri pronta.")
                     listenForWake()
+                    main.postDelayed(callWatch, 2000)
                 }
             } catch (e: Throwable) {
                 CapriBus.log("❌ Erro ao carregar o modelo: ${e.message}")
@@ -130,6 +138,12 @@ class CapriService : Service() {
     private fun listenForWake() {
         if (destroyed) return
         stopVosk()
+        hideBar()
+        if (inCall()) {
+            mode = Mode.PAUSED // o callWatch retoma quando a chamada acabar
+            setStatus("Pausada durante a chamada")
+            return
+        }
         mode = Mode.WAKE
         val first = prefs.wakeList().firstOrNull() ?: "capri"
         if (!startVosk(question = false)) return
@@ -244,6 +258,7 @@ class CapriService : Service() {
         beep(ToneGenerator.TONE_PROP_BEEP)
         CapriBus.log("✨ Ativada!")
         setStatus("Pode falar...")
+        showBar()
         main.postDelayed({ if (mode == Mode.ASKING) startAndroidRecognizer() }, 300)
     }
 
@@ -319,6 +334,7 @@ class CapriService : Service() {
     }
 
     private fun noQuestion() {
+        pendingChoice = null
         CapriBus.log("🤷 Não ouvi nenhuma pergunta.")
         beep(ToneGenerator.TONE_PROP_NACK)
         main.postDelayed({ listenForWake() }, 400)
@@ -331,6 +347,14 @@ class CapriService : Service() {
         CapriBus.log("🗣️ Você: $q")
         setStatus("Pensando...")
 
+        // resposta para "qual deles?" de uma ligação
+        pendingChoice?.let { options ->
+            pendingChoice = null
+            val c = WhatsApp.pick(q, options)
+            if (c == null) speak("Não entendi qual deles. Pode pedir de novo.") else startCall(c)
+            return
+        }
+
         val key = prefs.apiKey
         if (key.isBlank()) {
             speak("Você ainda não colocou a chave do Gemini no aplicativo.")
@@ -341,17 +365,92 @@ class CapriService : Service() {
         gemini = g
 
         Thread {
-            val answer = try {
+            val reply = try {
                 g.ask(q)
             } catch (e: GeminiBusyException) {
                 CapriBus.log("⏳ ${e.message}")
-                "O Gemini está sobrecarregado agora. Tenta de novo daqui a pouco."
+                Gemini.Reply.Text("O Gemini está sobrecarregado agora. Tenta de novo daqui a pouco.")
             } catch (e: Exception) {
                 CapriBus.log("❌ ${e.message}")
-                "Deu um erro ao falar com o Gemini. Dá uma olhada no aplicativo."
+                Gemini.Reply.Text("Deu um erro ao falar com o Gemini. Dá uma olhada no aplicativo.")
             }
-            main.post { if (!destroyed) speak(answer) }
+            when (reply) {
+                is Gemini.Reply.Text -> main.post { if (!destroyed) speak(reply.text) }
+                is Gemini.Reply.WhatsAppCall -> {
+                    // null = sem permissão de contatos
+                    val found = try { WhatsApp.find(this, reply.contact, reply.video) } catch (_: SecurityException) { null }
+                    main.post { if (!destroyed) onCallRequest(reply, found) }
+                }
+            }
         }.start()
+    }
+
+    // ---------- 3b. Ligação pelo WhatsApp ----------
+
+    private fun onCallRequest(req: Gemini.Reply.WhatsAppCall, found: List<WhatsApp.Contact>?) {
+        when {
+            found == null -> speak("Preciso da permissão de contatos para ligar. Libera ela nas permissões do aplicativo.")
+            found.isEmpty() -> speak("Não encontrei ${req.contact} com WhatsApp nos seus contatos.")
+            found.size == 1 -> startCall(found[0])
+            else -> {
+                val options = found.take(4)
+                pendingChoice = options
+                val names = options.map { it.name }
+                speak("Encontrei ${names.dropLast(1).joinToString(", ")} e ${names.last()}. Qual deles?")
+            }
+        }
+    }
+
+    private fun startCall(c: WhatsApp.Contact) {
+        // com o app fechado, o Android só deixa abrir o WhatsApp com "aparecer sobre outros apps"
+        if (!Settings.canDrawOverlays(this) && !CapriBus.uiVisible) {
+            speak("Para eu ligar com o aplicativo fechado, preciso da permissão de aparecer sobre outros apps. Ativa nas configurações da Capri.")
+            return
+        }
+        pendingCall = c
+        speak(if (c.video) "Chamada de vídeo com ${c.name}." else "Ligando para ${c.name} no WhatsApp.")
+    }
+
+    private fun launchCall(c: WhatsApp.Contact) {
+        hideBar()
+        try {
+            WhatsApp.call(this, c)
+            CapriBus.log("📞 ${if (c.video) "Vídeo" else "Ligação"} pelo WhatsApp: ${c.name}")
+            // o callWatch volta a ouvir quando a chamada acabar (ou se ela não começar)
+            mode = Mode.PAUSED
+            setStatus("Abrindo o WhatsApp...")
+        } catch (e: Exception) {
+            CapriBus.log("❌ Não consegui abrir o WhatsApp: ${e.message}")
+            listenForWake()
+        }
+    }
+
+    private fun listenForChoice() {
+        mode = Mode.ASKING
+        beep(ToneGenerator.TONE_PROP_BEEP)
+        setStatus("Pode falar...")
+        main.postDelayed({ if (mode == Mode.ASKING) startAndroidRecognizer() }, 300)
+    }
+
+    private fun inCall(): Boolean {
+        val m = (getSystemService(AUDIO_SERVICE) as AudioManager).mode
+        return m == AudioManager.MODE_IN_CALL || m == AudioManager.MODE_IN_COMMUNICATION
+    }
+
+    /** Pausa a escuta durante qualquer chamada, para não disputar o microfone nem ouvir a conversa. */
+    private val callWatch = object : Runnable {
+        override fun run() {
+            if (destroyed) return
+            val busy = inCall()
+            if (busy && mode == Mode.WAKE) {
+                stopVosk()
+                mode = Mode.PAUSED
+                setStatus("Pausada durante a chamada")
+            } else if (!busy && mode == Mode.PAUSED) {
+                listenForWake()
+            }
+            main.postDelayed(this, 2000)
+        }
     }
 
     // ---------- 4. Falar ----------
@@ -417,12 +516,61 @@ class CapriService : Service() {
     private fun speakLocal(text: String) {
         setStatus("Falando...")
         val t = tts
-        if (!ttsReady || t == null) { listenForWake(); return }
+        if (!ttsReady || t == null) { afterSpeaking(); return }
         t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "capri-${System.currentTimeMillis()}")
     }
 
     private fun afterSpeaking() {
-        if (mode == Mode.SPEAKING && !destroyed) listenForWake()
+        if (mode != Mode.SPEAKING || destroyed) return
+        pendingCall?.let { c -> pendingCall = null; launchCall(c); return }
+        if (pendingChoice != null) { listenForChoice(); return }
+        listenForWake()
+    }
+
+    // ---------- barrinha "ouvindo" ----------
+
+    private var overlayBar: CapriBarView? = null
+
+    /** Desbloqueado: janela flutuante. Bloqueado/tela apagada: BarActivity (único jeito de passar do bloqueio). */
+    private fun showBar() {
+        if (!Settings.canDrawOverlays(this)) return
+        CapriBus.bar(true)
+        val locked = (getSystemService(KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
+        val screenOn = (getSystemService(POWER_SERVICE) as PowerManager).isInteractive
+        if (locked || !screenOn) {
+            try {
+                startActivity(Intent(this, BarActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))
+            } catch (_: Exception) {}
+            return
+        }
+        if (overlayBar != null) return
+        val d = resources.displayMetrics.density
+        val v = CapriBarView(this).apply { setStatus(CapriBus.status) }
+        val lp = WindowManager.LayoutParams(
+            resources.displayMetrics.widthPixels - (32 * d).toInt(),
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            // não rouba foco nem toques do app que estiver aberto
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = (48 * d).toInt()
+        }
+        try {
+            (getSystemService(WINDOW_SERVICE) as WindowManager).addView(v, lp)
+            overlayBar = v
+        } catch (e: Exception) {
+            CapriBus.log("⚠️ Não consegui mostrar a barra: ${e.message}")
+        }
+    }
+
+    private fun hideBar() {
+        if (CapriBus.barVisible) CapriBus.bar(false)
+        overlayBar?.let { try { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) } catch (_: Exception) {} }
+        overlayBar = null
     }
 
     // ---------- utilidades ----------
@@ -433,6 +581,7 @@ class CapriService : Service() {
 
     private fun setStatus(s: String) {
         CapriBus.status(s)
+        overlayBar?.setStatus(s)
         if (!destroyed) {
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
                 .notify(NOTIF_ID, buildNotification(s))
@@ -469,6 +618,7 @@ class CapriService : Service() {
         main.removeCallbacksAndMessages(null)
         stopVosk()
         destroyAndroidRecognizer()
+        hideBar()
         try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
         releasePlayer()
         try { model?.close() } catch (_: Exception) {}

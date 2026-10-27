@@ -11,9 +11,15 @@ class GeminiBusyException(msg: String) : IOException(msg)
 
 class Gemini(val apiKey: String, val model: String) {
 
+    /** O que o Gemini decidiu: responder em texto ou pedir uma ação no celular. */
+    sealed class Reply {
+        data class Text(val text: String) : Reply()
+        data class WhatsAppCall(val contact: String, val video: Boolean) : Reply()
+    }
+
     private val history = mutableListOf<Pair<String, String>>() // (role, texto)
 
-    fun ask(question: String): String {
+    fun ask(question: String): Reply {
         history.add("user" to question)
 
         val contents = JSONArray()
@@ -27,6 +33,7 @@ class Gemini(val apiKey: String, val model: String) {
         val body = JSONObject()
             .put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", SYSTEM))))
             .put("contents", contents)
+            .put("tools", JSONArray().put(JSONObject().put("functionDeclarations", JSONArray().put(callTool()))))
             .toString()
 
         try {
@@ -35,6 +42,18 @@ class Gemini(val apiKey: String, val model: String) {
             val parts = JSONObject(resp)
                 .getJSONArray("candidates").getJSONObject(0)
                 .getJSONObject("content").getJSONArray("parts")
+
+            for (i in 0 until parts.length()) {
+                val fc = parts.getJSONObject(i).optJSONObject("functionCall") ?: continue
+                if (fc.optString("name") != CALL_TOOL) continue
+                val args = fc.optJSONObject("args") ?: JSONObject()
+                val contact = args.optString("contato").trim()
+                if (contact.isBlank()) continue
+                // no histórico fica só um texto, para a conversa continuar fazendo sentido
+                remember("Ok, vou ligar para $contact pelo WhatsApp.")
+                return Reply.WhatsAppCall(contact, args.optBoolean("video", false))
+            }
+
             val sb = StringBuilder()
             for (i in 0 until parts.length()) {
                 val p = parts.getJSONObject(i)
@@ -42,15 +61,34 @@ class Gemini(val apiKey: String, val model: String) {
             }
             val answer = sb.toString().trim().ifBlank { "Não tenho uma resposta para isso." }
 
-            history.add("model" to answer)
-            // guarda só as últimas 10 trocas (pergunta + resposta)
-            while (history.size > 20) { history.removeAt(0); history.removeAt(0) }
-            return answer
+            remember(answer)
+            return Reply.Text(answer)
         } catch (e: Exception) {
             if (history.lastOrNull()?.first == "user") history.removeAt(history.lastIndex)
             throw e
         }
     }
+
+    private fun remember(answer: String) {
+        history.add("model" to answer)
+        // guarda só as últimas 10 trocas (pergunta + resposta)
+        while (history.size > 20) { history.removeAt(0); history.removeAt(0) }
+    }
+
+    /** Ação que o Gemini pode pedir: ligação (ou vídeo) pelo WhatsApp. */
+    private fun callTool() = JSONObject()
+        .put("name", CALL_TOOL)
+        .put("description", "Faz uma ligação de voz ou chamada de vídeo pelo WhatsApp para um contato da agenda do celular.")
+        .put("parameters", JSONObject()
+            .put("type", "OBJECT")
+            .put("properties", JSONObject()
+                .put("contato", JSONObject()
+                    .put("type", "STRING")
+                    .put("description", "Nome do contato do jeito que o usuário falou, ex.: \"João\", \"mãe\", \"Ana da academia\"."))
+                .put("video", JSONObject()
+                    .put("type", "BOOLEAN")
+                    .put("description", "true se o usuário pediu chamada de vídeo; false para ligação de voz.")))
+            .put("required", JSONArray().put("contato")))
 
     /**
      * Tenta o modelo escolhido (2 vezes) e, se ele estiver sobrecarregado,
@@ -101,6 +139,7 @@ class Gemini(val apiKey: String, val model: String) {
 
     companion object {
         private val RETRY_CODES = setOf(429, 500, 502, 503, 504)
+        private const val CALL_TOOL = "ligar_whatsapp"
         private val FALLBACK_MODELS = listOf("gemini-flash-lite-latest", "gemini-2.5-flash")
 
         const val SYSTEM = """Você é a Capri, uma assistente de voz que fala português do Brasil.
@@ -109,6 +148,8 @@ Suas respostas serão lidas em voz alta por um sintetizador de voz, então:
 - nunca use markdown, listas, asteriscos, emojis, tabelas ou links;
 - escreva números e siglas de um jeito fácil de falar;
 - se a pergunta depender de informação em tempo real que você não tem (hora exata, clima, notícias de hoje), diga isso com sinceridade.
+Quando pedirem para ligar ou fazer chamada de vídeo para alguém, use a função ligar_whatsapp.
+Você só liga pelo WhatsApp; não existe ligação telefônica comum.
 Seja simpática e direta."""
     }
 }

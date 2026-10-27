@@ -87,12 +87,14 @@ class MainActivity : NeonActivity() {
 
     override fun onResume() {
         super.onResume()
+        CapriBus.uiVisible = true
         CapriBus.onChange = { render() }
         render()
     }
 
     override fun onPause() {
         super.onPause()
+        CapriBus.uiVisible = false
         CapriBus.onChange = null
         pulse?.cancel()
         pulse = null
@@ -132,7 +134,8 @@ class MainActivity : NeonActivity() {
             startService(Intent(this, CapriService::class.java).setAction(CapriService.ACTION_STOP))
             return
         }
-        val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        // contatos é opcional: sem ela a Capri só não consegue ligar pelo WhatsApp
+        val needed = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_CONTACTS)
         if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
         val missing = needed.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
         if (missing.isEmpty()) startCapri() else requestPermissions(missing.toTypedArray(), REQ_PERMS)
