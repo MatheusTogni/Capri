@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
@@ -21,6 +22,7 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 
@@ -33,6 +35,10 @@ class SettingsActivity : NeonActivity() {
     private var voices: List<Voice> = emptyList()
     private var selectedVoice = ""
     private lateinit var voicePicker: TextView
+    private var speaker: RoboSpeaker? = null
+    private var fx = RoboFx.CAPRI // ajustes da voz robótica na tela (salvos no "Salvar configurações")
+    private var volume = 70 // volume da Capri na tela (idem)
+    private val fxRefresh = mutableListOf<() -> Unit>() // redesenha as barras depois do "Restaurar"
     private lateinit var permsHeader: Button
     private lateinit var permsBox: LinearLayout
     private var permsOpen = false
@@ -103,9 +109,32 @@ class SettingsActivity : NeonActivity() {
         }, LinearLayout.LayoutParams(MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
         refreshVoice()
         tts = TextToSpeech(this) { st ->
-            if (st == TextToSpeech.SUCCESS) ttsReady = true
+            if (st == TextToSpeech.SUCCESS) {
+                ttsReady = true
+                tts?.let { speaker = RoboSpeaker(this, it) }
+            }
             refreshVoice()
         }
+
+        // ---- volume próprio + voz robótica: ajusta ouvindo no "Testar" ----
+        volume = prefs.volume
+        root.addView(slider("Volume da Capri (independente do celular)", 0..100, { volume }) { volume = it },
+            blockParams(dp(12)))
+        fx = prefs.robo
+        root.addView(fxSlider("Tom", 50..200, { it.pitch }) { f, v -> f.copy(pitch = v) },
+            blockParams(dp(12)))
+        root.addView(fxSlider("Velocidade", 50..200, { it.rate }) { f, v -> f.copy(rate = v) },
+            blockParams(dp(4)))
+        root.addView(fxSlider("Metálico", 0..100, { it.metal }) { f, v -> f.copy(metal = v) },
+            blockParams(dp(4)))
+        root.addView(fxSlider("Digital", 0..100, { it.digital }) { f, v -> f.copy(digital = v) },
+            blockParams(dp(4)))
+        root.addView(fxSlider("Eco sintético", 0..100, { it.echo }) { f, v -> f.copy(echo = v) },
+            blockParams(dp(4)))
+        root.addView(neonButton("↺ Restaurar padrão Capri", Neon.MUTED).apply {
+            textSize = 12f
+            setOnClickListener { fx = RoboFx.CAPRI; fxRefresh.forEach { it() } }
+        }, LinearLayout.LayoutParams(MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
 
         root.addView(label("Conversa"))
         var conversation = prefs.conversationMode
@@ -114,6 +143,23 @@ class SettingsActivity : NeonActivity() {
         var bargeIn = prefs.bargeIn
         root.addView(toggle("Interromper dizendo a palavra de ativação", bargeIn) { bargeIn = it },
             LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(8) })
+        var greetOn = prefs.greetOn
+        root.addView(toggle("Responder ao ser chamada (no lugar do bipe)", greetOn) { greetOn = it },
+            LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(8) })
+        root.addView(label("Frases de resposta (uma por linha; sorteia uma a cada chamada)"))
+        val greetInput = input().apply {
+            setText(prefs.greetings)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            isSingleLine = false
+            minLines = 4
+            gravity = Gravity.TOP or Gravity.START
+        }
+        root.addView(greetInput, blockParams(dp(6)))
+        root.addView(neonButton("↺ Frases padrão", Neon.MUTED).apply {
+            textSize = 12f
+            setOnClickListener { greetInput.setText(Prefs.DEFAULT_GREETINGS) }
+        }, LinearLayout.LayoutParams(MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
 
         root.addView(label("Histórico"))
         var debugLogs = prefs.debugLogs
@@ -126,8 +172,12 @@ class SettingsActivity : NeonActivity() {
                 prefs.model = modelInput.text.toString()
                 prefs.wakeWords = wakeInput.text.toString()
                 prefs.voice = selectedVoice
+                prefs.robo = fx
+                prefs.volume = volume
                 prefs.conversationMode = conversation
                 prefs.bargeIn = bargeIn
+                prefs.greetOn = greetOn
+                prefs.greetings = greetInput.text.toString()
                 prefs.debugLogs = debugLogs
                 Toast.makeText(this@SettingsActivity, "Salvo!", Toast.LENGTH_SHORT).show()
                 finish()
@@ -270,6 +320,7 @@ class SettingsActivity : NeonActivity() {
     }
 
     override fun onDestroy() {
+        speaker?.stop()
         try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
         super.onDestroy()
     }
@@ -320,7 +371,42 @@ class SettingsActivity : NeonActivity() {
         val t = tts
         if (!ttsReady || t == null) { Toast.makeText(this, "Ainda carregando as vozes do celular...", Toast.LENGTH_SHORT).show(); return }
         PhoneVoices.apply(t, selectedVoice)
-        t.speak(TEST_PHRASE, TextToSpeech.QUEUE_FLUSH, null, "teste-voz")
+        speaker?.speak(TEST_PHRASE, fx, volume)
+    }
+
+    /** Barra de um ajuste da voz robótica: mexer nela muda [fx] (o "Testar" já usa). */
+    private fun fxSlider(title: String, range: IntRange, get: (RoboFx) -> Int, set: (RoboFx, Int) -> RoboFx): View =
+        slider(title, range, { get(fx) }) { fx = set(fx, it) }
+
+    /** "Metálico · 35%" com a barra embaixo. [value] é relido no "Restaurar". */
+    private fun slider(title: String, range: IntRange, value: () -> Int, onChange: (Int) -> Unit): View {
+        val text = mono(12f, Neon.TEXT)
+        val bar = SeekBar(this).apply {
+            max = range.last - range.first
+            progressTintList = ColorStateList.valueOf(Neon.CYAN)
+            thumbTintList = ColorStateList.valueOf(Neon.CYAN)
+            progressBackgroundTintList = ColorStateList.valueOf(Neon.MUTED)
+        }
+        fun refresh() {
+            text.text = "$title · ${value()}%"
+            bar.progress = value() - range.first
+        }
+        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                onChange(p + range.first)
+                text.text = "$title · ${value()}%"
+            }
+            override fun onStartTrackingTouch(s: SeekBar) {}
+            override fun onStopTrackingTouch(s: SeekBar) {}
+        })
+        refresh()
+        fxRefresh.add { refresh() }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(text)
+            addView(bar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        }
     }
 
     companion object {

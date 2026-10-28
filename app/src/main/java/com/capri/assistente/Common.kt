@@ -54,6 +54,40 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("bargeIn", true)
         set(v) = sp.edit().putBoolean("bargeIn", v).apply()
 
+    /** Ao ser chamada, responde com uma frase da lista ("Fala aí!") em vez do bipe. */
+    var greetOn: Boolean
+        get() = sp.getBoolean("greetOn", true)
+        set(v) = sp.edit().putBoolean("greetOn", v).apply()
+
+    /** Frases de resposta ao ser chamada, uma por linha. */
+    var greetings: String
+        get() = sp.getString("greetings", DEFAULT_GREETINGS) ?: DEFAULT_GREETINGS
+        set(v) = sp.edit().putString("greetings", v).apply()
+
+    fun greetList(): List<String> = greetings.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+    /** Volume da Capri em % do máximo, independente do volume de mídia do celular. */
+    var volume: Int
+        get() = sp.getInt("capriVolume", 70)
+        set(v) = sp.edit().putInt("capriVolume", v).apply()
+
+    /** Tom, velocidade e efeitos da voz robótica (padrão: [RoboFx.CAPRI]). */
+    var robo: RoboFx
+        get() {
+            val d = RoboFx.CAPRI
+            return RoboFx(
+                pitch = sp.getInt("roboPitch", d.pitch),
+                rate = sp.getInt("roboRate", d.rate),
+                metal = sp.getInt("roboMetal", d.metal),
+                digital = sp.getInt("roboDigital", d.digital),
+                echo = sp.getInt("roboEcho", d.echo),
+            )
+        }
+        set(v) = sp.edit()
+            .putInt("roboPitch", v.pitch).putInt("roboRate", v.rate)
+            .putInt("roboMetal", v.metal).putInt("roboDigital", v.digital).putInt("roboEcho", v.echo)
+            .apply()
+
     /** Mostra no histórico os detalhes técnicos (tempos, requisições, estado do serviço). */
     var debugLogs: Boolean
         get() = sp.getBoolean("debugLogs", false)
@@ -78,7 +112,13 @@ class Prefs(ctx: Context) {
 
     companion object {
         const val DEFAULT_MODEL = "gemini-flash-latest"
-        const val DEFAULT_WAKE = "capri, cabri, capre, kapri, caprin"    }
+        const val DEFAULT_WAKE = "capri, cabri, capre, kapri, caprin"
+        // curtas: ela só começa a ouvir a pergunta depois de terminar a frase
+        val DEFAULT_GREETINGS = listOf(
+            "Fala aí!", "E aí?", "Opa, diz aí.", "Pode falar.", "Tô aqui.", "Tô ouvindo.",
+            "Manda.", "Diz aí.", "Sim?", "Que foi?", "Oi! Em que posso ajudar?", "Pois não?",
+        ).joinToString("\n")
+    }
 }
 
 /** "Barramento" simples entre o serviço e a tela (mesmo processo). */

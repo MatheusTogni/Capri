@@ -24,7 +24,6 @@ import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.view.Gravity
 import android.view.WindowManager
 import org.json.JSONObject
@@ -60,6 +59,7 @@ class CapriService : Service() {
     private var androidRecognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var speaker: RoboSpeaker? = null // fala com o tom e os efeitos da voz robótica
     private var appliedVoice: String? = null // voz já aplicada no tts (null = nenhuma ainda)
     private var pendingCall: WhatsApp.Contact? = null // liga quando terminar de falar
     private var pendingChoice: List<WhatsApp.Contact>? = null // "qual deles?" aguardando resposta
@@ -99,18 +99,10 @@ class CapriService : Service() {
 
         tts = TextToSpeech(this) { st ->
             if (st == TextToSpeech.SUCCESS) {
-                tts?.setLanguage(Locale("pt", "BR"))
-                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(id: String?) {
-                        main.post {
-                            Timing.mark("voz")
-                            Timing.summary()?.let { CapriBus.debug("⏱️ $it") }
-                        }
-                    }
-                    override fun onDone(id: String?) { main.post { afterSpeaking() } }
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(id: String?) { main.post { afterSpeaking() } }
-                })
+                tts?.let { t ->
+                    t.setLanguage(Locale("pt", "BR"))
+                    speaker = RoboSpeaker(this, t)
+                }
                 ttsReady = true
             } else {
                 CapriBus.log("⚠️ Não consegui iniciar a voz (TTS) do celular.")
@@ -271,11 +263,33 @@ class CapriService : Service() {
         Timing.mark("inicio")
         stopVosk()
         if (interrupted) stopSpeaking()
-        beep(ToneGenerator.TONE_PROP_BEEP)
         CapriBus.log(if (interrupted) "✋ Interrompida!" else "✨ Ativada!")
         setStatus("Pode falar...")
         showBar()
-        main.postDelayed({ if (mode == Mode.ASKING) startAndroidRecognizer() }, 300)
+        val phrase = pickGreeting()
+        val s = speaker
+        val t = tts
+        if (phrase == null || s == null || t == null || !ttsReady) {
+            beep(ToneGenerator.TONE_PROP_BEEP)
+            main.postDelayed({ if (mode == Mode.ASKING) startAndroidRecognizer() }, 300)
+            return
+        }
+        // "Fala aí!" no lugar do bipe; só ouve depois, para não ouvir a própria voz
+        CapriBus.debug("👋 $phrase")
+        useChosenVoice(t)
+        s.speak(phrase, prefs.robo, prefs.volume, onDone = {
+            main.postDelayed({ if (mode == Mode.ASKING) startAndroidRecognizer() }, 150)
+        })
+    }
+
+    private var lastGreeting = ""
+
+    /** Frase aleatória da lista (sem repetir a anterior); null = usar o bipe. */
+    private fun pickGreeting(): String? {
+        if (!prefs.greetOn) return null
+        val all = prefs.greetList()
+        if (all.isEmpty()) return null
+        return all.filter { it != lastGreeting }.ifEmpty { all }.random().also { lastGreeting = it }
     }
 
     private fun startAndroidRecognizer() {
@@ -589,9 +603,15 @@ class CapriService : Service() {
         if (prefs.bargeIn) { stopVosk(); startVosk(question = false) }
         setStatus("Falando...")
         val t = tts
-        if (!ttsReady || t == null) { afterSpeaking(); return }
+        val s = speaker
+        if (!ttsReady || t == null || s == null) { afterSpeaking(); return }
         useChosenVoice(t)
-        t.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "capri-${System.currentTimeMillis()}")
+        s.speak(clean, prefs.robo, prefs.volume,
+            onStart = {
+                Timing.mark("voz")
+                Timing.summary()?.let { CapriBus.debug("⏱️ $it") }
+            },
+            onDone = { afterSpeaking() })
     }
 
     /** Aplica a voz das configurações (só quando muda, já que dá para trocar com a Capri ligada). */
@@ -615,7 +635,7 @@ class CapriService : Service() {
     private fun stopSpeaking() {
         pendingCall = null // "Ligando para..." interrompido = ligação cancelada
         pendingChoice = null
-        try { tts?.stop() } catch (_: Exception) {}
+        speaker?.stop()
     }
 
     // ---------- barrinha "ouvindo" ----------
@@ -666,8 +686,11 @@ class CapriService : Service() {
 
     // ---------- utilidades ----------
 
+    /** O bipe também usa o volume da Capri, senão some com o celular no mudo. */
     private fun beep(type: Int) {
+        CapriVolume.hold(this, prefs.volume)
         try { tone?.startTone(type, 150) } catch (_: Exception) {}
+        main.postDelayed({ CapriVolume.release(this) }, 300)
     }
 
     private fun setStatus(s: String) {
@@ -730,6 +753,8 @@ class CapriService : Service() {
         stopVosk()
         destroyAndroidRecognizer()
         hideBar()
+        speaker?.stop()
+        CapriVolume.releaseAll(this) // bipe pendente (o removeCallbacks cancelou a devolução)
         try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
         try { model?.close() } catch (_: Exception) {}
         try { tone?.release() } catch (_: Exception) {}
