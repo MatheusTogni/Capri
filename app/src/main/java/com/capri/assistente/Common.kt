@@ -32,6 +32,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("model", DEFAULT_MODEL)?.ifBlank { DEFAULT_MODEL } ?: DEFAULT_MODEL
         set(v) = sp.edit().putString("model", v.trim()).apply()
 
+    /** Chave do Groq (opcional): responde quando o Gemini recusa. */
+    var groqKey: String
+        get() = sp.getString("groqKey", "") ?: ""
+        set(v) = sp.edit().putString("groqKey", v.trim()).apply()
+
     var wakeWords: String
         get() = sp.getString("wakeWords", DEFAULT_WAKE) ?: DEFAULT_WAKE
         set(v) = sp.edit().putString("wakeWords", v).apply()

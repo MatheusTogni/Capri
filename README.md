@@ -9,6 +9,7 @@ Assistente de voz para Android com palavra de ativação "Capri", usando Vosk (o
 
 ## No celular
 1. Cole a chave do Gemini (aistudio.google.com → Get API key) e toque em **Salvar**.
+   Opcional: cole também uma chave do Groq (console.groq.com → API Keys), que responde quando o Gemini recusar.
 2. Toque em **Liberar da economia de bateria** e marque a Capri como "sem restrições".
 3. Toque em **Ligar Capri**, aceite as permissões e diga "Capri".
 

@@ -18,6 +18,8 @@ sealed class Command {
     object Today : Command()
     data class Timer(val seconds: Int) : Command()
     data class Alarm(val hour: Int, val minute: Int, val label: String) : Command()
+    /** Para de ouvir até ligar de novo pelo app; quem executa é o serviço. */
+    object Shutdown : Command()
 
     /** Lista de tarefas ([TodoStore]); quem executa é o serviço, que pode perguntar "qual delas?". */
     sealed class Todo : Command() {
@@ -47,6 +49,8 @@ object LocalCommands {
     private val TIME = Regex("""^((me )?(diz|fala|sabe|sabe me dizer) )?(que|quais) horas? (sao|e)( agora)?$""")
     private val TODAY = Regex("""^((me )?(diz|fala) )?(que|qual) (dia|data) (e|e hoje|de hoje|hoje)$|^que dia e hoje$""")
     private val DURATION = Regex("""(\d+|um|uma|meia) (segundos?|minutos?|horas?)""")
+    // a frase inteira tem que ser o pedido ("desliga", "pode desligar", "para de ouvir"), para não desligar sem querer
+    private val SHUTDOWN = Regex("""^(pode )?(se )?(desliga|desligar|desligue|desativa|desativar|desative)( se)?( a capri| capri)?( agora| ai| por favor)?$|^(para|pare|parar) de (ouvir|escutar)( agora)?$""")
 
     fun parse(spoken: String): Command? {
         val t = normalize(spoken).removePrefix("capri ").trim()
@@ -68,6 +72,7 @@ object LocalCommands {
             }
         }
 
+        if (SHUTDOWN.matches(t)) return Command.Shutdown
         if (TIME.matches(t)) return Command.Time
         if (TODAY.matches(t)) return Command.Today
 
@@ -104,7 +109,7 @@ class CommandRunner(private val ctx: Context) {
             Command.Today -> "Hoje é " + SimpleDateFormat("EEEE, d 'de' MMMM", ptBR).format(Date()) + "."
             is Command.Timer -> timer(c.seconds)
             is Command.Alarm -> alarm(c)
-            is Command.Todo -> "" // o serviço trata antes de chegar aqui
+            is Command.Todo, Command.Shutdown -> "" // o serviço trata antes de chegar aqui
         }
     } catch (e: Exception) {
         CapriBus.log("❌ Comando falhou: ${e.message}")

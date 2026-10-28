@@ -81,6 +81,17 @@ class SettingsActivity : NeonActivity() {
         val modelInput = input().apply { setText(prefs.model); isSingleLine = true }
         root.addView(modelInput, blockParams(dp(6)))
 
+        root.addView(label("Chave do Groq (reserva, opcional)"))
+        val groqInput = input().apply {
+            setText(prefs.groqKey)
+            hint = "Responde quando o Gemini recusar (console.groq.com)"
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            transformationMethod = PasswordTransformationMethod.getInstance()
+            typeface = Typeface.MONOSPACE
+        }
+        root.addView(groqInput, blockParams(dp(6)))
+
         root.addView(label("Palavras de ativação (separadas por vírgula)"))
         val wakeInput = input().apply { setText(prefs.wakeWords) }
         root.addView(wakeInput, blockParams(dp(6)))
@@ -170,6 +181,7 @@ class SettingsActivity : NeonActivity() {
             setOnClickListener {
                 prefs.apiKey = keyInput.text.toString()
                 prefs.model = modelInput.text.toString()
+                prefs.groqKey = groqInput.text.toString()
                 prefs.wakeWords = wakeInput.text.toString()
                 prefs.voice = selectedVoice
                 prefs.robo = fx

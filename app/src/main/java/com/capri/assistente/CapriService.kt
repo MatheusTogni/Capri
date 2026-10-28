@@ -37,7 +37,7 @@ import java.util.Locale
  *  1. Vosk fica ouvindo (offline) até reconhecer a palavra de ativação.
  *  2. Bipe -> o reconhecedor do Android (Google) ouve a pergunta.
  *     Se ele falhar em segundo plano, o próprio Vosk ouve a pergunta.
- *  3. A pergunta vai para o Gemini.
+ *  3. A pergunta vai para o Gemini (ou para o Groq, se o Gemini recusar).
  *  4. A resposta é lida em voz alta e volta para o passo 1.
  */
 class CapriService : Service() {
@@ -66,9 +66,11 @@ class CapriService : Service() {
     private lateinit var todos: TodoStore
     private var pendingTodo: List<String>? = null // "qual delas?" da lista de tarefas
     private var pendingClear = false // "tem certeza?" antes de limpar a lista
+    private var pendingShutdown = false // "desliga": para o serviço quando terminar de falar
     private var followUp = false // ouvindo sem palavra de ativação logo depois de responder (modo conversa)
     private var speakingNorm = "" // o que ela está falando, para não se interromper com a própria voz
-    private var gemini: Gemini? = null
+    private var brain: Brain? = null
+    private var brainKeys = "" // chaves/modelo com que o brain foi criado
     private var wakeLock: PowerManager.WakeLock? = null
     private var tone: ToneGenerator? = null
 
@@ -426,28 +428,31 @@ class CapriService : Service() {
         LocalCommands.parse(q)?.let { runCommand(it); return }
 
         val key = prefs.apiKey
-        if (key.isBlank()) {
+        val groqKey = prefs.groqKey
+        if (key.isBlank() && groqKey.isBlank()) {
             speak("Você ainda não colocou a chave do Gemini no aplicativo.")
             return
         }
         val modelName = prefs.model
-        val g = gemini?.takeIf { it.apiKey == key && it.model == modelName } ?: Gemini(key, modelName)
-        gemini = g
+        val keys = "$key|$modelName|$groqKey"
+        val b = brain?.takeIf { brainKeys == keys } ?: Brain(listOfNotNull<AiProvider>(
+            key.takeIf { it.isNotBlank() }?.let { Gemini(it, modelName) },
+            groqKey.takeIf { it.isNotBlank() }?.let { Groq(it) },
+        ))
+        brain = b
+        brainKeys = keys
 
         Thread {
+            // o motivo de cada falha já foi para o histórico (Brain)
             val reply = try {
-                g.ask(q)
-            } catch (e: GeminiBusyException) {
-                CapriBus.log("⏳ ${e.message}")
-                Gemini.Reply.Text("O Gemini está sobrecarregado agora. Tenta de novo daqui a pouco.")
+                b.ask(q)
             } catch (e: Exception) {
-                CapriBus.log("❌ ${e.message}")
-                Gemini.Reply.Text("Deu um erro ao falar com o Gemini. Dá uma olhada no aplicativo.")
+                Brain.Reply.Text(HttpErrors.spoken(e))
             }
             when (reply) {
-                is Gemini.Reply.Text -> main.post { if (!destroyed) speak(reply.text) }
-                is Gemini.Reply.Action -> main.post { if (!destroyed) runCommand(reply.command) }
-                is Gemini.Reply.WhatsAppCall -> {
+                is Brain.Reply.Text -> main.post { if (!destroyed) speak(reply.text) }
+                is Brain.Reply.Action -> main.post { if (!destroyed) runCommand(reply.command) }
+                is Brain.Reply.WhatsAppCall -> {
                     // null = sem permissão de contatos
                     val found = try { WhatsApp.find(this, reply.contact, reply.video) } catch (_: SecurityException) { null }
                     main.post { if (!destroyed) onCallRequest(reply, found) }
@@ -462,6 +467,12 @@ class CapriService : Service() {
         if (c is Command.Todo) {
             CapriBus.debug("📝 Lista: ${c.javaClass.simpleName}")
             todoReply(todos.run(c))
+            return
+        }
+        if (c == Command.Shutdown) {
+            CapriBus.log("⏻ Desligada por voz")
+            pendingShutdown = true
+            speak("Tá bom, vou parar de ouvir.")
             return
         }
         // timer/alarme abrem o app de relógio: com o app fechado precisa de "aparecer sobre outros apps"
@@ -482,7 +493,7 @@ class CapriService : Service() {
 
     // ---------- 3b. Ligação pelo WhatsApp ----------
 
-    private fun onCallRequest(req: Gemini.Reply.WhatsAppCall, found: List<WhatsApp.Contact>?) {
+    private fun onCallRequest(req: Brain.Reply.WhatsAppCall, found: List<WhatsApp.Contact>?) {
         when {
             found == null -> speak("Preciso da permissão de contatos para ligar. Libera ela nas permissões do aplicativo.")
             found.isEmpty() -> speak("Não encontrei ${req.contact} com WhatsApp nos seus contatos.")
@@ -649,6 +660,8 @@ class CapriService : Service() {
 
     private fun afterSpeaking() {
         if (mode != Mode.SPEAKING || destroyed) return
+        // mesmo caminho do "Desligar" da notificação: só volta pelo botão do app
+        if (pendingShutdown) { stopSelf(); return }
         pendingCall?.let { c -> pendingCall = null; launchCall(c); return }
         if (pendingChoice != null || pendingTodo != null || pendingClear) { listenForChoice(); return }
         if (prefs.conversationMode) listenForFollowUp() else listenForWake()
@@ -667,6 +680,7 @@ class CapriService : Service() {
         pendingChoice = null
         pendingTodo = null
         pendingClear = false // interrompeu o "tem certeza?": não apaga nada
+        pendingShutdown = false // chamou de novo enquanto se despedia: continua ligada
         speaker?.stop()
     }
 
