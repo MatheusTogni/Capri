@@ -11,8 +11,8 @@ android {
         applicationId = "com.capri.assistente"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.3.3"
+        versionCode = 9
+        versionName = "1.3.4"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }

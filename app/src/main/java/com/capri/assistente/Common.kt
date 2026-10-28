@@ -54,6 +54,11 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("bargeIn", true)
         set(v) = sp.edit().putBoolean("bargeIn", v).apply()
 
+    /** Mostra no histórico os detalhes técnicos (tempos, requisições, estado do serviço). */
+    var debugLogs: Boolean
+        get() = sp.getBoolean("debugLogs", false)
+        set(v) { sp.edit().putBoolean("debugLogs", v).apply(); CapriBus.debugLogs = v }
+
     fun wakeList(): List<String> =
         wakeWords.split(",").map { normalize(it) }.filter { it.isNotBlank() }
 
@@ -109,11 +114,21 @@ object CapriBus {
         onChange?.invoke()
         file?.let { f -> io.execute { append(f, line) } }
     }
+    /** Opção "Mostrar logs de debug" das configurações. */
+    @Volatile var debugLogs = false
+    /** Detalhe técnico: só vai para o histórico com os logs de debug ligados. */
+    fun debug(s: String) { if (debugLogs) log(s) }
+
     fun logText(): String = lines.joinToString("\n\n")
 
     /** Liga o histórico ao arquivo e carrega o que ficou de antes (só na primeira chamada). */
-    fun init(ctx: Context) = main.post {
-        if (file != null) return@post
+    fun init(ctx: Context) {
+        debugLogs = Prefs(ctx).debugLogs // já vale para o que for registrado logo em seguida
+        main.post { attachFile(ctx) }
+    }
+
+    private fun attachFile(ctx: Context) {
+        if (file != null) return
         val f = File(ctx.filesDir, "historico.txt")
         file = f
         io.execute {

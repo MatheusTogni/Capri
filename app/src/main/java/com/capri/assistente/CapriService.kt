@@ -87,13 +87,9 @@ class CapriService : Service() {
         prefs = Prefs(this)
         CapriBus.init(this)
         createChannel()
-        val n = buildNotification("Carregando...")
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } else {
-            startForeground(NOTIF_ID, n)
-        }
+        promote(buildNotification("Carregando..."))
         CapriBus.running = true
+        CapriBus.debug("ℹ️ Serviço iniciado. ${processInfo()}")
 
         wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "capri:escuta")
@@ -108,7 +104,7 @@ class CapriService : Service() {
                     override fun onStart(id: String?) {
                         main.post {
                             Timing.mark("voz")
-                            Timing.summary()?.let { CapriBus.log("⏱️ $it") }
+                            Timing.summary()?.let { CapriBus.debug("⏱️ $it") }
                         }
                     }
                     override fun onDone(id: String?) { main.post { afterSpeaking() } }
@@ -129,9 +125,10 @@ class CapriService : Service() {
                 main.post {
                     if (destroyed) { m.close(); return@post }
                     model = m
+                    CapriBus.log("✅ Capri pronta.")
                     val battery = (getSystemService(POWER_SERVICE) as PowerManager)
                         .isIgnoringBatteryOptimizations(packageName)
-                    CapriBus.log("✅ Capri pronta. (bateria ${if (battery) "sem restrições" else "otimizada"})")
+                    CapriBus.debug("ℹ️ Bateria: ${if (battery) "sem restrições" else "otimizada"}")
                     listenForWake()
                     main.postDelayed(callWatch, 2000)
                 }
@@ -315,7 +312,7 @@ class CapriService : Service() {
                     SpeechRecognizer.ERROR_NO_MATCH,
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> noQuestion()
                     else -> {
-                        CapriBus.log("ℹ️ Reconhecedor do Google falhou (erro $error). Usando o Vosk para a pergunta.")
+                        CapriBus.debug("ℹ️ Reconhecedor do Google falhou (erro $error). Usando o Vosk para a pergunta.")
                         startVoskQuestion()
                     }
                 }
@@ -432,7 +429,7 @@ class CapriService : Service() {
             speak("Para isso com o aplicativo fechado, preciso da permissão de aparecer sobre outros apps. Ativa nas configurações da Capri.")
             return
         }
-        CapriBus.log("⚡ Comando: ${c.javaClass.simpleName}")
+        CapriBus.debug("⚡ Comando: ${c.javaClass.simpleName}")
         val answer = CommandRunner(this).run(c)
         if (answer.isBlank()) {
             // ex.: volume no mudo — não tem o que falar
@@ -518,8 +515,34 @@ class CapriService : Service() {
             } else if (!busy && mode == Mode.PAUSED) {
                 listenForWake()
             }
+            checkForeground()
             checkMic()
             main.postDelayed(this, 2000)
+        }
+    }
+
+    private fun promote(n: Notification) {
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } else {
+            startForeground(NOTIF_ID, n)
+        }
+    }
+
+    /** O Android pode tirar o serviço do primeiro plano; sem isso ele silencia o microfone. */
+    private var fgLost = false // já registrou (e tentou corrigir) esta queda
+
+    private fun checkForeground() {
+        if (Build.VERSION.SDK_INT < 29) return
+        if (foregroundServiceType != 0) { fgLost = false; return }
+        if (fgLost) return
+        fgLost = true
+        CapriBus.debug("⚠️ O Android tirou a Capri do primeiro plano. ${processInfo()}")
+        try {
+            promote(buildNotification(CapriBus.status))
+            CapriBus.debug("✅ Voltou ao primeiro plano. ${processInfo()}")
+        } catch (e: Exception) {
+            CapriBus.debug("❌ Não deu para voltar ao primeiro plano: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
@@ -541,7 +564,8 @@ class CapriService : Service() {
         micState = state
         val where = if (CapriBus.uiVisible) "app aberto" else "app fechado"
         when (state) {
-            "silenciado" -> CapriBus.log("🔇 O Android silenciou o microfone ($where). ${processInfo()}")
+            "silenciado" -> CapriBus.log("🔇 O Android silenciou o microfone ($where)." +
+                if (CapriBus.debugLogs) " ${processInfo()}" else "")
             "parou" -> {
                 CapriBus.log("🔇 A gravação do microfone parou sozinha ($where). Reabrindo...")
                 listenForWake()
@@ -687,7 +711,7 @@ class CapriService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        CapriBus.log("ℹ️ App removido dos recentes; a Capri continua ligada.")
+        CapriBus.debug("ℹ️ App removido dos recentes; a Capri continua ligada.")
         super.onTaskRemoved(rootIntent)
     }
 

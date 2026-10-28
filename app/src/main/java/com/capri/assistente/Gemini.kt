@@ -184,7 +184,7 @@ class Gemini(val apiKey: String, val model: String) {
             if (i > 0) Thread.sleep(300L)
             try {
                 val resp = post(m, body)
-                if (m != model) CapriBus.log("↪️ $model indisponível (${last?.message}), respondi com $m")
+                if (m != model) CapriBus.debug("↪️ $model indisponível (${last?.message}), respondi com $m")
                 return resp
             } catch (e: GeminiBusyException) {
                 last = e
@@ -237,7 +237,7 @@ class Gemini(val apiKey: String, val model: String) {
             }
             return resp
         } catch (e: SocketTimeoutException) {
-            CapriBus.log("   ↳ $m sem resposta em ${Timing.fmt(SystemClock.elapsedRealtime() - t0)}")
+            CapriBus.debug("   ↳ $m sem resposta em ${Timing.fmt(SystemClock.elapsedRealtime() - t0)}")
             throw GeminiBusyException("Gemini demorou demais para responder ($m).")
         } finally {
             conn.disconnect()
@@ -249,7 +249,7 @@ class Gemini(val apiKey: String, val model: String) {
         val thoughts = if (code in 200..299) {
             try { JSONObject(resp).optJSONObject("usageMetadata")?.optInt("thoughtsTokenCount", 0) ?: 0 } catch (_: Exception) { 0 }
         } else 0
-        CapriBus.log("   ↳ $m HTTP $code · 1º byte ${Timing.fmt(firstByte)} · total ${Timing.fmt(total)}" +
+        CapriBus.debug("   ↳ $m HTTP $code · 1º byte ${Timing.fmt(firstByte)} · total ${Timing.fmt(total)}" +
             if (thoughts > 0) " · pensou $thoughts tokens" else "")
     }
 

@@ -115,6 +115,11 @@ class SettingsActivity : NeonActivity() {
         root.addView(toggle("Interromper dizendo a palavra de ativação", bargeIn) { bargeIn = it },
             LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(8) })
 
+        root.addView(label("Histórico"))
+        var debugLogs = prefs.debugLogs
+        root.addView(toggle("Mostrar logs de debug", debugLogs) { debugLogs = it },
+            LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(6) })
+
         root.addView(neonButton("Salvar configurações", Neon.GREEN).apply {
             setOnClickListener {
                 prefs.apiKey = keyInput.text.toString()
@@ -123,6 +128,7 @@ class SettingsActivity : NeonActivity() {
                 prefs.voice = selectedVoice
                 prefs.conversationMode = conversation
                 prefs.bargeIn = bargeIn
+                prefs.debugLogs = debugLogs
                 Toast.makeText(this@SettingsActivity, "Salvo!", Toast.LENGTH_SHORT).show()
                 finish()
             }
