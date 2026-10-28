@@ -1,16 +1,21 @@
 package com.capri.assistente
 
+import android.Manifest
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Typeface
-import android.media.AudioAttributes
-import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
+import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
@@ -18,14 +23,19 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import java.io.File
 
 /** Tela de configurações, aberta pela engrenagem da tela principal. */
 class SettingsActivity : NeonActivity() {
 
     private lateinit var prefs: Prefs
-    private var testPlayer: MediaPlayer? = null
-    private lateinit var overlayButton: Button
+    private var tts: TextToSpeech? = null // só para listar e testar as vozes
+    private var ttsReady = false
+    private var voices: List<Voice> = emptyList()
+    private var selectedVoice = ""
+    private lateinit var voicePicker: TextView
+    private lateinit var permsHeader: Button
+    private lateinit var permsBox: LinearLayout
+    private var permsOpen = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,26 +80,32 @@ class SettingsActivity : NeonActivity() {
         root.addView(wakeInput, blockParams(dp(6)))
 
         root.addView(label("Voz da Capri"))
-        var selectedVoice = prefs.voice
-        val voicePicker = TextView(this).apply {
+        selectedVoice = prefs.voice
+        voicePicker = TextView(this).apply {
             textSize = 15f
             setTextColor(Neon.TEXT)
             background = CutDrawable(Neon.PANEL, Neon.PURPLE, dp(1).toFloat(), dp(8).toFloat())
             setPadding(dp(12), dp(12), dp(12), dp(12))
-            text = voiceLabel(selectedVoice)
+            setOnClickListener { pickVoice() }
         }
-        voicePicker.setOnClickListener {
-            pickVoice(selectedVoice) { v -> selectedVoice = v; voicePicker.text = voiceLabel(v) }
-        }
-        val testButton = neonButton("▶ Testar", Neon.CYAN).apply { textSize = 12f }
-        testButton.setOnClickListener {
-            testVoice(keyInput.text.toString().trim(), selectedVoice, testButton)
+        val testButton = neonButton("▶ Testar", Neon.CYAN).apply {
+            textSize = 12f
+            setOnClickListener { testVoice() }
         }
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             addView(voicePicker, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
             addView(testButton, LinearLayout.LayoutParams(WRAP_CONTENT, dp(46)).apply { marginStart = dp(8) })
         }, blockParams(dp(6)))
+        root.addView(neonButton("⬇ Baixar mais vozes", Neon.PURPLE).apply {
+            textSize = 12f
+            setOnClickListener { PhoneVoices.openDownload(this@SettingsActivity, tts?.defaultEngine) }
+        }, LinearLayout.LayoutParams(MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
+        refreshVoice()
+        tts = TextToSpeech(this) { st ->
+            if (st == TextToSpeech.SUCCESS) ttsReady = true
+            refreshVoice()
+        }
 
         root.addView(label("Conversa"))
         var conversation = prefs.conversationMode
@@ -112,27 +128,20 @@ class SettingsActivity : NeonActivity() {
             }
         }, LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(18) })
 
-        root.addView(neonButton("Liberar da economia de bateria", Neon.PURPLE).apply {
-            setOnClickListener {
-                try {
-                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                } catch (e: Exception) {
-                    startActivity(Intent(Settings.ACTION_SETTINGS))
-                }
-            }
-        }, LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(10) })
-
-        // sem isso não aparece a barrinha "ouvindo" e o Android bloqueia abrir o WhatsApp em segundo plano
-        overlayButton = neonButton("", Neon.PURPLE).apply {
-            setOnClickListener {
-                try {
-                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-                } catch (e: Exception) {
-                    startActivity(Intent(Settings.ACTION_SETTINGS))
-                }
-            }
+        // ---- permissões: lista que abre e fecha, com o que está OK e o que falta ----
+        root.addView(label("Permissões"))
+        permsHeader = neonButton("", Neon.GREEN).apply {
+            isAllCaps = false
+            textSize = 13f
+            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            setPadding(dp(14), 0, dp(14), 0)
+            setOnClickListener { permsOpen = !permsOpen; refreshPerms() }
         }
-        root.addView(overlayButton, LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(10) })
+        root.addView(permsHeader, LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(6) })
+        permsBox = panel(Neon.PURPLE)
+        root.addView(permsBox, blockParams(dp(6)))
+        // começa aberta se faltar alguma, para ninguém deixar passar
+        permsOpen = perms().any { !granted(it) }
 
         setContentView(ScrollView(this).apply {
             setBackgroundColor(Neon.BG)
@@ -143,13 +152,108 @@ class SettingsActivity : NeonActivity() {
 
     override fun onResume() {
         super.onResume()
-        // atualiza ao voltar da tela de permissão do Android
-        overlayButton.text = if (Settings.canDrawOverlays(this)) "✓ Aparecer sobre outros apps liberado"
-                             else "Liberar aparecer sobre outros apps"
+        // atualiza ao voltar da tela de permissão do Android (ou de baixar vozes)
+        refreshPerms()
+        refreshVoice()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_PERM) return
+        val p = permissions.firstOrNull() ?: return
+        // negada sem poder perguntar de novo ("não perguntar novamente"): só dá para liberar na tela do app
+        if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED && !shouldShowRequestPermissionRationale(p)) {
+            Toast.makeText(this, "Libere em Permissões, na tela do aplicativo.", Toast.LENGTH_LONG).show()
+            openScreen(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        }
+        refreshPerms()
+    }
+
+    /**
+     * Uma permissão da lista. [runtime] é pedida pela janelinha do Android;
+     * as especiais ([check] + [screen]) só se liberam numa tela de configurações do sistema.
+     */
+    private class Perm(
+        val title: String,
+        val why: String,
+        val runtime: String? = null,
+        val check: (() -> Boolean)? = null,
+        val screen: (() -> Intent)? = null,
+    )
+
+    private fun perms(): List<Perm> = buildList {
+        add(Perm("Microfone", "Ouvir a palavra de ativação e o que você fala.",
+            runtime = Manifest.permission.RECORD_AUDIO))
+        add(Perm("Contatos", "Achar o contato para ligar pelo WhatsApp.",
+            runtime = Manifest.permission.READ_CONTACTS))
+        add(Perm("Ligações", "Abrir a chamada no WhatsApp.",
+            runtime = Manifest.permission.CALL_PHONE))
+        if (Build.VERSION.SDK_INT >= 33) {
+            add(Perm("Notificações", "Mostrar o aviso de que a Capri está ligada.",
+                runtime = Manifest.permission.POST_NOTIFICATIONS))
+        }
+        // sem isso não aparece a barrinha "ouvindo" e o Android bloqueia abrir o WhatsApp em segundo plano
+        add(Perm("Aparecer sobre outros apps", "Barrinha \"ouvindo\" e abrir WhatsApp ou relógio com o app fechado.",
+            check = { Settings.canDrawOverlays(this@SettingsActivity) },
+            screen = { Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")) }))
+        add(Perm("Fora da economia de bateria", "O Android não desligar a Capri em segundo plano.",
+            check = { getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName) },
+            screen = { Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS) }))
+    }
+
+    private fun granted(p: Perm): Boolean =
+        p.runtime?.let { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED } ?: p.check!!()
+
+    private fun request(p: Perm) {
+        if (p.runtime != null) requestPermissions(arrayOf(p.runtime), REQ_PERM)
+        else openScreen(p.screen!!())
+    }
+
+    private fun openScreen(intent: Intent) {
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+        }
+    }
+
+    /** Redesenha o cabeçalho (X/Y OK) e, se estiver aberta, as linhas de cada permissão. */
+    private fun refreshPerms() {
+        val list = perms()
+        val ok = list.count { granted(it) }
+        val allOk = ok == list.size
+        permsHeader.text = "${if (permsOpen) "▾" else "▸"}  ${if (allOk) "✓" else "⚠"}  $ok de ${list.size} liberadas"
+        styleButton(permsHeader, if (allOk) Neon.GREEN else Neon.YELLOW, filled = false)
+
+        permsBox.removeAllViews()
+        permsBox.visibility = if (permsOpen) View.VISIBLE else View.GONE
+        if (!permsOpen) return
+        list.forEachIndexed { i, p ->
+            val on = granted(p)
+            permsBox.addView(LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                addView(LinearLayout(this@SettingsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(mono(14f, if (on) Neon.GREEN else Neon.RED).apply {
+                        text = (if (on) "✓  " else "✕  ") + p.title
+                    })
+                    addView(mono(11f, Neon.MUTED).apply {
+                        text = p.why
+                        setPadding(0, dp(2), 0, 0)
+                    })
+                }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+                if (!on) {
+                    addView(neonButton("Liberar", Neon.YELLOW).apply {
+                        textSize = 11f
+                        setOnClickListener { request(p) }
+                    }, LinearLayout.LayoutParams(WRAP_CONTENT, dp(40)).apply { marginStart = dp(8) })
+                }
+            }, blockParams(if (i == 0) 0 else dp(12)))
+        }
     }
 
     override fun onDestroy() {
-        releaseTestPlayer()
+        try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
         super.onDestroy()
     }
 
@@ -170,81 +274,41 @@ class SettingsActivity : NeonActivity() {
         }
     }
 
-    // "" = voz do próprio celular (sem Gemini)
-    private fun voiceLabel(v: String): String = when {
-        v.isBlank() -> "Voz do celular   ▾"
-        else -> GeminiVoice.VOICES[v]?.let { "$v · $it   ▾" } ?: "$v   ▾"
+    /** Relê as vozes instaladas (podem ter sido baixadas agora) e atualiza o texto do seletor. */
+    private fun refreshVoice() {
+        val t = tts
+        voices = if (ttsReady && t != null) PhoneVoices.list(t) else emptyList()
+        val name = if (!ttsReady && selectedVoice.isNotBlank()) "Carregando vozes..."
+                   else PhoneVoices.label(selectedVoice, voices)
+        voicePicker.text = "$name   ▾"
     }
 
-    private fun pickVoice(current: String, onPick: (String) -> Unit) {
-        val names = GeminiVoice.VOICES.keys.toMutableList()
-        // mantém na lista uma voz salva que não está entre as conhecidas
-        if (current.isNotBlank() && current !in names) names.add(0, current)
-        val values = names + ""
-        val labels = values.map { voiceLabel(it).removeSuffix("▾").trim() }.toTypedArray()
+    private fun pickVoice() {
+        if (!ttsReady) { Toast.makeText(this, "Ainda carregando as vozes do celular...", Toast.LENGTH_SHORT).show(); return }
+        val values = listOf("") + voices.map { it.name }
+        val labels = values.map { PhoneVoices.label(it, voices) }.toTypedArray()
         AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("Voz da Capri")
-            .setSingleChoiceItems(labels, values.indexOf(current)) { d, i ->
-                onPick(values[i])
+            .setSingleChoiceItems(labels, values.indexOf(selectedVoice).coerceAtLeast(0)) { d, i ->
+                selectedVoice = values[i]
+                refreshVoice()
                 d.dismiss()
             }
             .setNegativeButton("Cancelar", null)
             .show()
     }
 
-    /** Toca uma frase curta com a voz escolhida (usa a chave do campo, mesmo sem salvar). */
-    private fun testVoice(key: String, voice: String, button: Button) {
-        if (key.isBlank()) { Toast.makeText(this, "Coloque a chave do Gemini primeiro.", Toast.LENGTH_SHORT).show(); return }
-        if (voice.isBlank()) { Toast.makeText(this, "A voz do celular não usa o Gemini; escolha uma voz da lista.", Toast.LENGTH_SHORT).show(); return }
-        button.isEnabled = false
-        button.text = "..."
-        Thread {
-            val result = try {
-                Result.success(GeminiVoice(key, voice).synth(TEST_PHRASE))
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
-            runOnUiThread {
-                if (isDestroyed) return@runOnUiThread
-                button.isEnabled = true
-                button.text = "▶ Testar"
-                result.onSuccess { prefs.voiceBlockedUntil = 0L; playTest(it) }.onFailure {
-                    Toast.makeText(this, "Não deu para testar: ${it.message?.take(150)}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }.start()
-    }
-
-    private fun playTest(wav: ByteArray) {
-        try {
-            releaseTestPlayer()
-            val f = File(cacheDir, "teste-voz.wav")
-            f.writeBytes(wav)
-            testPlayer = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-                setDataSource(f.absolutePath)
-                setOnCompletionListener { releaseTestPlayer() }
-                prepare()
-                start()
-            }
-        } catch (e: Exception) {
-            releaseTestPlayer()
-            Toast.makeText(this, "Não consegui tocar o áudio: ${e.message}", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun releaseTestPlayer() {
-        testPlayer?.let { try { it.release() } catch (_: Exception) {} }
-        testPlayer = null
+    /** Fala uma frase curta com a voz escolhida (mesmo sem salvar). */
+    private fun testVoice() {
+        val t = tts
+        if (!ttsReady || t == null) { Toast.makeText(this, "Ainda carregando as vozes do celular...", Toast.LENGTH_SHORT).show(); return }
+        PhoneVoices.apply(t, selectedVoice)
+        t.speak(TEST_PHRASE, TextToSpeech.QUEUE_FLUSH, null, "teste-voz")
     }
 
     companion object {
         // tem a palavra de ativação: se a Capri estiver ligada, o teste pode ativá-la
         private const val TEST_PHRASE = "Oi! Eu sou a Capri."
+        private const val REQ_PERM = 7
     }
 }

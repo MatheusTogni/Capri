@@ -103,8 +103,8 @@ class Gemini(val apiKey: String, val model: String) {
     }
 
     /**
-     * Pesquisa no Google. Nos modelos Gemini 3+ a busca não existe no plano gratuito,
-     * então a pergunta vai para o gemini-2.5-flash (500 pesquisas grátis por dia).
+     * Pesquisa no Google. Tenta os modelos de SEARCH_MODELS em ordem: se um sair do ar
+     * (o Google aposenta modelos antigos com HTTP 404) ou estiver sobrecarregado, vai para o próximo.
      */
     private fun search(question: String, query: String): String {
         val body = JSONObject()
@@ -113,16 +113,18 @@ class Gemini(val apiKey: String, val model: String) {
                 .put("role", "user")
                 .put("parts", JSONArray().put(JSONObject().put("text", "$question\n(pesquisar: $query)")))))
             .put("tools", JSONArray().put(JSONObject().put("google_search", JSONObject())))
-        return try {
-            CapriBus.log("🔎 Pesquisando: $query")
-            val resp = post(SEARCH_MODEL, body, readTimeout = 25_000)
-            val parts = JSONObject(resp).getJSONArray("candidates").getJSONObject(0)
-                .getJSONObject("content").getJSONArray("parts")
-            textOf(parts).ifBlank { "Não achei nada sobre isso." }
-        } catch (e: Exception) {
-            CapriBus.log("⚠️ Pesquisa falhou: ${e.message}")
-            "Não consegui pesquisar agora. Tenta de novo daqui a pouco."
+        CapriBus.log("🔎 Pesquisando: $query")
+        for (m in SEARCH_MODELS) {
+            try {
+                val resp = post(m, body, readTimeout = 25_000)
+                val parts = JSONObject(resp).getJSONArray("candidates").getJSONObject(0)
+                    .getJSONObject("content").getJSONArray("parts")
+                return textOf(parts).ifBlank { "Não achei nada sobre isso." }
+            } catch (e: Exception) {
+                CapriBus.log("⚠️ Pesquisa falhou em $m: ${e.message}")
+            }
         }
+        return "Não consegui pesquisar agora. Tenta de novo daqui a pouco."
     }
 
     private fun toCommand(name: String, a: JSONObject): Command? = when (name) {
@@ -243,8 +245,8 @@ class Gemini(val apiKey: String, val model: String) {
         private val RETRY_CODES = setOf(429, 500, 502, 503, 504)
         private const val CALL_TOOL = "ligar_whatsapp"
         private const val SEARCH_TOOL = "pesquisar_na_web"
-        private const val SEARCH_MODEL = "gemini-2.5-flash"
-        private val FALLBACK_MODELS = listOf("gemini-flash-lite-latest", "gemini-2.5-flash")
+        private val SEARCH_MODELS = listOf("gemini-3.8-flash", "gemini-flash-lite-latest")
+        private val FALLBACK_MODELS = listOf("gemini-flash-lite-latest", "gemini-3.8-flash")
 
         /** Jeito de falar (vale também para a pesquisa). */
         const val STYLE = """Você é a Capri, uma assistente de voz que fala português do Brasil.

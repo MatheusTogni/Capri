@@ -27,19 +27,17 @@ class Prefs(ctx: Context) {
         get() = sp.getString("model", DEFAULT_MODEL)?.ifBlank { DEFAULT_MODEL } ?: DEFAULT_MODEL
         set(v) = sp.edit().putString("model", v.trim()).apply()
 
-    /** Até quando não vale a pena chamar a voz do Gemini (cota diária esgotada). */
-    var voiceBlockedUntil: Long
-        get() = sp.getLong("voiceBlockedUntil", 0L)
-        set(v) = sp.edit().putLong("voiceBlockedUntil", v).apply()
-
     var wakeWords: String
         get() = sp.getString("wakeWords", DEFAULT_WAKE) ?: DEFAULT_WAKE
         set(v) = sp.edit().putString("wakeWords", v).apply()
 
-    /** Voz do Gemini (ex.: "Kore"). Vazio = usar a voz do próprio celular. */
+    /**
+     * Nome da voz do celular (ex.: "pt-br-x-afs-local"). Vazio = voz padrão do celular.
+     * Chave nova: a antiga "voice" guardava vozes do Gemini, que não existem mais no app.
+     */
     var voice: String
-        get() = sp.getString("voice", DEFAULT_VOICE) ?: DEFAULT_VOICE
-        set(v) = sp.edit().putString("voice", v.trim()).apply()
+        get() = sp.getString("phoneVoice", "") ?: ""
+        set(v) = sp.edit().putString("phoneVoice", v.trim()).apply()
 
     /** Depois de responder, ouve mais uma vez sem precisar da palavra de ativação. */
     var conversationMode: Boolean
@@ -70,9 +68,7 @@ class Prefs(ctx: Context) {
 
     companion object {
         const val DEFAULT_MODEL = "gemini-flash-latest"
-        const val DEFAULT_WAKE = "capri, cabri, capre, kapri, caprin"
-        const val DEFAULT_VOICE = "Kore"
-    }
+        const val DEFAULT_WAKE = "capri, cabri, capre, kapri, caprin"    }
 }
 
 /** "Barramento" simples entre o serviço e a tela (mesmo processo). */

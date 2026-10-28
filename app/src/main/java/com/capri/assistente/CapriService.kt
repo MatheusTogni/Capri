@@ -1,5 +1,6 @@
 package com.capri.assistente
 
+import android.Manifest
 import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -7,12 +8,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.graphics.drawable.Icon
-import android.media.AudioAttributes
 import android.media.AudioManager
-import android.media.MediaPlayer
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
@@ -60,8 +60,7 @@ class CapriService : Service() {
     private var androidRecognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
-    private var player: MediaPlayer? = null
-    private var speakId = 0 // invalida áudios do Gemini que chegarem atrasados
+    private var appliedVoice: String? = null // voz já aplicada no tts (null = nenhuma ainda)
     private var pendingCall: WhatsApp.Contact? = null // liga quando terminar de falar
     private var pendingChoice: List<WhatsApp.Contact>? = null // "qual deles?" aguardando resposta
     private var followUp = false // ouvindo sem palavra de ativação logo depois de responder (modo conversa)
@@ -453,6 +452,10 @@ class CapriService : Service() {
             speak("Para eu ligar com o aplicativo fechado, preciso da permissão de aparecer sobre outros apps. Ativa nas configurações da Capri.")
             return
         }
+        if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
+            speak("Preciso da permissão de fazer ligações para abrir a chamada no WhatsApp. Libera ela nas permissões do aplicativo.")
+            return
+        }
         pendingCall = c
         speak(if (c.video) "Chamada de vídeo com ${c.name}." else "Ligando para ${c.name} no WhatsApp.")
     }
@@ -466,6 +469,9 @@ class CapriService : Service() {
             // o callWatch volta a ouvir quando a chamada acabar (ou se ela não começar)
             mode = Mode.PAUSED
             setStatus("Abrindo o WhatsApp...")
+        } catch (e: SecurityException) {
+            CapriBus.log("❌ Não consegui abrir o WhatsApp: ${e.message}")
+            speak("Preciso da permissão de fazer ligações para abrir a chamada no WhatsApp. Libera ela nas permissões do aplicativo.")
         } catch (e: Exception) {
             CapriBus.log("❌ Não consegui abrir o WhatsApp: ${e.message}")
             listenForWake()
@@ -507,75 +513,24 @@ class CapriService : Service() {
         mode = Mode.SPEAKING
         CapriBus.log("🤖 Capri: $text")
         val clean = text.replace(Regex("[*#_`>|]"), " ").take(3900)
-        val id = ++speakId
         speakingNorm = normalize(clean)
         // interromper: enquanto fala, o Vosk continua ouvindo só a palavra de ativação
         if (prefs.bargeIn) { stopVosk(); startVosk(question = false) }
-        val key = prefs.apiKey
-        val voiceName = prefs.voice
-        val quotaOver = System.currentTimeMillis() < prefs.voiceBlockedUntil
-        if (key.isBlank() || voiceName.isBlank() || quotaOver) { speakLocal(clean); return }
-
-        setStatus("Pensando na voz...")
-        Thread {
-            val wav = try {
-                GeminiVoice(key, voiceName).synth(clean)
-            } catch (e: GeminiVoice.QuotaException) {
-                val until = System.currentTimeMillis() + e.retryAfterMs
-                prefs.voiceBlockedUntil = until
-                val hora = java.text.SimpleDateFormat("HH:mm", Locale("pt", "BR")).format(java.util.Date(until))
-                CapriBus.log("⏳ Cota diária da voz do Gemini acabou. Usando a voz do celular até $hora.")
-                null
-            } catch (e: Exception) {
-                CapriBus.log("⚠️ ${e.message} (usando a voz do celular)")
-                null
-            }
-            main.post {
-                if (destroyed || id != speakId || mode != Mode.SPEAKING) return@post
-                if (wav == null || !playWav(wav, id)) speakLocal(clean)
-            }
-        }.start()
-    }
-
-    /** Toca o áudio do Gemini; retorna false se não conseguiu (aí cai na voz do celular). */
-    private fun playWav(wav: ByteArray, id: Int): Boolean = try {
-        releasePlayer()
-        val f = java.io.File(cacheDir, "fala.wav")
-        f.writeBytes(wav)
-        player = MediaPlayer().apply {
-            setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            setDataSource(f.absolutePath)
-            setOnCompletionListener { if (id == speakId) { releasePlayer(); afterSpeaking() } }
-            setOnErrorListener { _, what, _ ->
-                if (id == speakId) { CapriBus.log("⚠️ Erro ao tocar a voz do Gemini ($what)"); releasePlayer(); afterSpeaking() }
-                true
-            }
-            prepare()
-            start()
-        }
-        setStatus("Falando...")
-        true
-    } catch (e: Exception) {
-        CapriBus.log("⚠️ Não consegui tocar a voz do Gemini: ${e.message}")
-        releasePlayer()
-        false
-    }
-
-    private fun releasePlayer() {
-        player?.let { try { it.release() } catch (_: Exception) {} }
-        player = null
-    }
-
-    private fun speakLocal(text: String) {
         setStatus("Falando...")
         val t = tts
         if (!ttsReady || t == null) { afterSpeaking(); return }
-        t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "capri-${System.currentTimeMillis()}")
+        useChosenVoice(t)
+        t.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "capri-${System.currentTimeMillis()}")
+    }
+
+    /** Aplica a voz das configurações (só quando muda, já que dá para trocar com a Capri ligada). */
+    private fun useChosenVoice(t: TextToSpeech) {
+        val name = prefs.voice
+        if (name == appliedVoice) return
+        appliedVoice = name
+        if (!PhoneVoices.apply(t, name)) {
+            CapriBus.log("⚠️ A voz escolhida não está mais no celular. Usando a voz padrão.")
+        }
     }
 
     private fun afterSpeaking() {
@@ -587,11 +542,9 @@ class CapriService : Service() {
 
     /** Corta a fala no meio (quando dizem "Capri" enquanto ela fala). */
     private fun stopSpeaking() {
-        speakId++ // descarta áudio do Gemini que ainda esteja chegando
         pendingCall = null // "Ligando para..." interrompido = ligação cancelada
         pendingChoice = null
         try { tts?.stop() } catch (_: Exception) {}
-        releasePlayer()
     }
 
     // ---------- barrinha "ouvindo" ----------
@@ -687,7 +640,6 @@ class CapriService : Service() {
         destroyAndroidRecognizer()
         hideBar()
         try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
-        releasePlayer()
         try { model?.close() } catch (_: Exception) {}
         try { tone?.release() } catch (_: Exception) {}
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}

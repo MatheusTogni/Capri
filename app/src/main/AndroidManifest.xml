@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Ligações pelo WhatsApp: achar o contato e abrir a chamada com o app em segundo plano -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- o WhatsApp exige isso de quem abre a tela de chamada dele -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Timer e alarme no app de relógio (o Android concede sem perguntar) -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
