@@ -208,6 +208,13 @@ class SettingsActivity : NeonActivity() {
             // só "Sem restrições" conta; "Otimizado" (chave ligada na tela do app) ainda economiza bateria
             screen = { Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")) },
             fallback = { Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS) }))
+        // marcação separada da de cima (pode estar ligada mesmo com "Sem restrições"): com ela o Android
+        // tira o serviço do primeiro plano ao sair do app e silencia o microfone
+        if (Build.VERSION.SDK_INT >= 28) {
+            add(Perm("Liberada em segundo plano", "Continuar ouvindo com o app fechado.",
+                check = { !CapriService.backgroundRestricted(this@SettingsActivity) },
+                screen = { Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")) }))
+        }
     }
 
     private fun granted(p: Perm): Boolean =
