@@ -129,7 +129,9 @@ class CapriService : Service() {
                 main.post {
                     if (destroyed) { m.close(); return@post }
                     model = m
-                    CapriBus.log("✅ Capri pronta.")
+                    val battery = (getSystemService(POWER_SERVICE) as PowerManager)
+                        .isIgnoringBatteryOptimizations(packageName)
+                    CapriBus.log("✅ Capri pronta. (bateria ${if (battery) "sem restrições" else "otimizada"})")
                     listenForWake()
                     main.postDelayed(callWatch, 2000)
                 }
@@ -516,7 +518,35 @@ class CapriService : Service() {
             } else if (!busy && mode == Mode.PAUSED) {
                 listenForWake()
             }
+            checkMic()
             main.postDelayed(this, 2000)
+        }
+    }
+
+    private var micState = "ok" // último estado do microfone registrado no histórico
+
+    /**
+     * Diagnóstico: com o app fechado, o Android pode silenciar o microfone ou parar a gravação
+     * sem avisar. Registra no histórico quando isso acontece e quando volta.
+     */
+    private fun checkMic() {
+        if (mode != Mode.WAKE || speechService == null) return
+        val mine = (getSystemService(AUDIO_SERVICE) as AudioManager).activeRecordingConfigurations
+        val state = when {
+            mine.isEmpty() -> "parou"
+            Build.VERSION.SDK_INT >= 29 && mine.all { it.isClientSilenced } -> "silenciado"
+            else -> "ok"
+        }
+        if (state == micState) return
+        micState = state
+        val where = if (CapriBus.uiVisible) "app aberto" else "app fechado"
+        when (state) {
+            "silenciado" -> CapriBus.log("🔇 O Android silenciou o microfone ($where).")
+            "parou" -> {
+                CapriBus.log("🔇 A gravação do microfone parou sozinha ($where). Reabrindo...")
+                listenForWake()
+            }
+            else -> CapriBus.log("🎙️ Microfone voltou ($where).")
         }
     }
 
@@ -644,6 +674,11 @@ class CapriService : Service() {
             .setContentIntent(openPi)
             .addAction(Notification.Action.Builder(null as Icon?, "Desligar", stopPi).build())
             .build()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        CapriBus.log("ℹ️ App removido dos recentes; a Capri continua ligada.")
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
