@@ -735,8 +735,12 @@ class CapriService : Service() {
     }
 
     private fun createChannel() {
-        val ch = NotificationChannel(CHANNEL, "Capri ouvindo", NotificationManager.IMPORTANCE_LOW)
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
+        // MIN: sem ícone na barra de status, fica recolhida no fim da lista (o Android exige a notificação para o microfone)
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        nm.deleteNotificationChannel("capri") // canal antigo (LOW); importância de canal existente não muda
+        val ch = NotificationChannel(CHANNEL, "Capri em segundo plano", NotificationManager.IMPORTANCE_MIN)
+        ch.setShowBadge(false)
+        nm.createNotificationChannel(ch)
     }
 
     private fun buildNotification(text: String): Notification {
@@ -753,6 +757,7 @@ class CapriService : Service() {
             .setColor(Neon.RED)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setShowWhen(false)
             .setContentIntent(openPi)
             .addAction(Notification.Action.Builder(null as Icon?, "Desligar", stopPi).build())
             .build()
@@ -802,7 +807,7 @@ class CapriService : Service() {
                 ctx.getSystemService(android.app.ActivityManager::class.java).isBackgroundRestricted
 
         const val ACTION_STOP = "com.capri.assistente.STOP"
-        private const val CHANNEL = "capri"
+        private const val CHANNEL = "capri_min"
         private const val NOTIF_ID = 1
     }
 }
