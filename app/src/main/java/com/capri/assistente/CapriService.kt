@@ -63,6 +63,9 @@ class CapriService : Service() {
     private var appliedVoice: String? = null // voz já aplicada no tts (null = nenhuma ainda)
     private var pendingCall: WhatsApp.Contact? = null // liga quando terminar de falar
     private var pendingChoice: List<WhatsApp.Contact>? = null // "qual deles?" aguardando resposta
+    private lateinit var todos: TodoStore
+    private var pendingTodo: List<String>? = null // "qual delas?" da lista de tarefas
+    private var pendingClear = false // "tem certeza?" antes de limpar a lista
     private var followUp = false // ouvindo sem palavra de ativação logo depois de responder (modo conversa)
     private var speakingNorm = "" // o que ela está falando, para não se interromper com a própria voz
     private var gemini: Gemini? = null
@@ -85,6 +88,7 @@ class CapriService : Service() {
 
     private fun init() {
         prefs = Prefs(this)
+        todos = TodoStore(this)
         CapriBus.init(this)
         createChannel()
         promote(buildNotification("Carregando..."))
@@ -376,6 +380,8 @@ class CapriService : Service() {
 
     private fun noQuestion() {
         pendingChoice = null
+        pendingTodo = null
+        pendingClear = false
         if (followUp) {
             // silêncio depois da resposta: a conversa acabou, volta a esperar o "Capri" sem alarde
             followUp = false
@@ -403,8 +409,20 @@ class CapriService : Service() {
             if (c == null) speak("Não entendi qual deles. Pode pedir de novo.") else startCall(c)
             return
         }
+        // lista de tarefas: "qual delas?" e "tem certeza?" aguardando resposta
+        pendingTodo?.let { options ->
+            pendingTodo = null
+            todoReply(todos.removeChoice(q, options))
+            return
+        }
+        if (pendingClear) {
+            pendingClear = false
+            todoReply(todos.confirmClear(q))
+            return
+        }
 
-        // pedidos simples (lanterna, volume, hora, timer) nem passam pelo Gemini
+        // pedidos simples (lista, lanterna, volume, hora, timer) nem passam pelo Gemini
+        TodoParser.parse(q, todos)?.let { runCommand(it); return }
         LocalCommands.parse(q)?.let { runCommand(it); return }
 
         val key = prefs.apiKey
@@ -441,6 +459,11 @@ class CapriService : Service() {
     // ---------- 3a. Comandos no celular ----------
 
     private fun runCommand(c: Command) {
+        if (c is Command.Todo) {
+            CapriBus.debug("📝 Lista: ${c.javaClass.simpleName}")
+            todoReply(todos.run(c))
+            return
+        }
         // timer/alarme abrem o app de relógio: com o app fechado precisa de "aparecer sobre outros apps"
         if (c.opensApp && !Settings.canDrawOverlays(this) && !CapriBus.uiVisible) {
             speak("Para isso com o aplicativo fechado, preciso da permissão de aparecer sobre outros apps. Ativa nas configurações da Capri.")
@@ -627,14 +650,23 @@ class CapriService : Service() {
     private fun afterSpeaking() {
         if (mode != Mode.SPEAKING || destroyed) return
         pendingCall?.let { c -> pendingCall = null; launchCall(c); return }
-        if (pendingChoice != null) { listenForChoice(); return }
+        if (pendingChoice != null || pendingTodo != null || pendingClear) { listenForChoice(); return }
         if (prefs.conversationMode) listenForFollowUp() else listenForWake()
+    }
+
+    /** Fala a resposta da lista e guarda a pergunta pendente ("qual delas?", "tem certeza?"). */
+    private fun todoReply(r: TodoReply) {
+        pendingTodo = r.choices
+        pendingClear = r.confirmClear
+        speak(r.text)
     }
 
     /** Corta a fala no meio (quando dizem "Capri" enquanto ela fala). */
     private fun stopSpeaking() {
         pendingCall = null // "Ligando para..." interrompido = ligação cancelada
         pendingChoice = null
+        pendingTodo = null
+        pendingClear = false // interrompeu o "tem certeza?": não apaga nada
         speaker?.stop()
     }
 

@@ -137,6 +137,18 @@ class Gemini(val apiKey: String, val model: String) {
             val h = a.optInt("hora", -1); val m = a.optInt("minuto", 0)
             if (h in 0..23 && m in 0..59) Command.Alarm(h, m, a.optString("descricao").trim()) else null
         }
+        "lista_tarefas" -> {
+            val text = a.optString("texto").trim()
+            val number = a.optInt("numero", 0)
+            when (a.optString("acao")) {
+                "adicionar" -> text.takeIf { it.isNotBlank() }?.let { Command.Todo.Add(it) }
+                "ler" -> Command.Todo.Read
+                "contar" -> Command.Todo.Count
+                "remover" -> if (text.isNotBlank() || number > 0) Command.Todo.Remove(text, number) else null
+                "limpar" -> Command.Todo.Clear
+                else -> null
+            }
+        }
         else -> null
     }
 
@@ -160,6 +172,11 @@ class Gemini(val apiKey: String, val model: String) {
             "hora" to prop("INTEGER", "Hora de 0 a 23."),
             "minuto" to prop("INTEGER", "Minuto de 0 a 59."),
             "descricao" to prop("STRING", "Texto do lembrete, ex.: \"tomar remédio\". Vazio para despertador.")))
+        .put(tool("lista_tarefas", "Mexe na lista de tarefas (afazeres) do usuário, salva no celular: adicionar, ler, contar, remover (feita/concluída) ou limpar tudo.",
+            listOf("acao"),
+            "acao" to prop("STRING", "Uma destas: adicionar, ler, contar, remover, limpar."),
+            "texto" to prop("STRING", "Para adicionar: a tarefa, curta, ex.: \"comprar pão\". Para remover: o nome ou parte do nome da tarefa."),
+            "numero" to prop("INTEGER", "Para remover pela posição na lista (1 = primeira). 0 se for pelo nome.")))
 
     private fun prop(type: String, description: String) =
         JSONObject().put("type", type).put("description", description)
@@ -274,7 +291,8 @@ Seja simpática e direta."""
         const val ACTIONS = """Você consegue agir no celular usando as funções disponíveis:
 - ligar ou fazer chamada de vídeo: ligar_whatsapp (você só liga pelo WhatsApp; não existe ligação telefônica comum);
 - clima, notícias, resultados de jogos ou qualquer coisa atual: pesquisar_na_web;
-- lanterna, volume, timer, alarme e lembretes: as funções com esses nomes.
+- lanterna, volume, timer, alarme e lembretes: as funções com esses nomes;
+- lista de tarefas, afazeres ou anotar algo para não esquecer: lista_tarefas.
 Se o pedido não precisar de nenhuma função, só responda."""
     }
 }

@@ -19,6 +19,16 @@ sealed class Command {
     data class Timer(val seconds: Int) : Command()
     data class Alarm(val hour: Int, val minute: Int, val label: String) : Command()
 
+    /** Lista de tarefas ([TodoStore]); quem executa é o serviço, que pode perguntar "qual delas?". */
+    sealed class Todo : Command() {
+        data class Add(val text: String) : Todo()
+        object Read : Todo()
+        object Count : Todo()
+        /** Pelo [number] na lista (1 = primeira) ou, se 0, pelo nome ou parte dele ([query]). */
+        data class Remove(val query: String, val number: Int = 0) : Todo()
+        object Clear : Todo()
+    }
+
     /** Precisa abrir o app de relógio (bloqueado em segundo plano sem "aparecer sobre outros apps"). */
     val opensApp get() = this is Timer || this is Alarm
 }
@@ -94,6 +104,7 @@ class CommandRunner(private val ctx: Context) {
             Command.Today -> "Hoje é " + SimpleDateFormat("EEEE, d 'de' MMMM", ptBR).format(Date()) + "."
             is Command.Timer -> timer(c.seconds)
             is Command.Alarm -> alarm(c)
+            is Command.Todo -> "" // o serviço trata antes de chegar aqui
         }
     } catch (e: Exception) {
         CapriBus.log("❌ Comando falhou: ${e.message}")
