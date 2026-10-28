@@ -541,7 +541,7 @@ class CapriService : Service() {
         micState = state
         val where = if (CapriBus.uiVisible) "app aberto" else "app fechado"
         when (state) {
-            "silenciado" -> CapriBus.log("🔇 O Android silenciou o microfone ($where).")
+            "silenciado" -> CapriBus.log("🔇 O Android silenciou o microfone ($where). ${processInfo()}")
             "parou" -> {
                 CapriBus.log("🔇 A gravação do microfone parou sozinha ($where). Reabrindo...")
                 listenForWake()
@@ -674,6 +674,16 @@ class CapriService : Service() {
             .setContentIntent(openPi)
             .addAction(Notification.Action.Builder(null as Icon?, "Desligar", stopPi).build())
             .build()
+    }
+
+    /** Como o Android está tratando o processo agora (125 = serviço em primeiro plano; 128 = tipo microfone). */
+    private fun processInfo(): String {
+        val p = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(p)
+        val type = if (Build.VERSION.SDK_INT >= 29) foregroundServiceType.toString() else "?"
+        val notif = (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+            .activeNotifications.any { it.id == NOTIF_ID }
+        return "[imp=${p.importance} tipo=$type notif=${if (notif) "sim" else "não"} android=${Build.VERSION.SDK_INT}]"
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
