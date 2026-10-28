@@ -1,5 +1,6 @@
 package com.capri.assistente
 
+import android.os.SystemClock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -209,6 +210,7 @@ class Gemini(val apiKey: String, val model: String) {
     private class BadThinkingConfig : IOException()
 
     private fun send(m: String, body: String, readTimeout: Int): String {
+        val t0 = SystemClock.elapsedRealtime()
         val conn = URL("https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent")
             .openConnection() as HttpURLConnection
         try {
@@ -222,8 +224,10 @@ class Gemini(val apiKey: String, val model: String) {
             conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
 
             val code = conn.responseCode
+            val firstByte = SystemClock.elapsedRealtime() - t0
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val resp = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+            logRequest(m, code, firstByte, SystemClock.elapsedRealtime() - t0, resp)
             if (code in RETRY_CODES) {
                 throw GeminiBusyException("Gemini sobrecarregado (HTTP $code em $m). Tente de novo daqui a pouco.")
             }
@@ -233,10 +237,20 @@ class Gemini(val apiKey: String, val model: String) {
             }
             return resp
         } catch (e: SocketTimeoutException) {
+            CapriBus.log("   ↳ $m sem resposta em ${Timing.fmt(SystemClock.elapsedRealtime() - t0)}")
             throw GeminiBusyException("Gemini demorou demais para responder ($m).")
         } finally {
             conn.disconnect()
         }
+    }
+
+    /** Uma linha por requisição: modelo, HTTP, tempo até o 1º byte, total e tokens de "raciocínio". */
+    private fun logRequest(m: String, code: Int, firstByte: Long, total: Long, resp: String) {
+        val thoughts = if (code in 200..299) {
+            try { JSONObject(resp).optJSONObject("usageMetadata")?.optInt("thoughtsTokenCount", 0) ?: 0 } catch (_: Exception) { 0 }
+        } else 0
+        CapriBus.log("   ↳ $m HTTP $code · 1º byte ${Timing.fmt(firstByte)} · total ${Timing.fmt(total)}" +
+            if (thoughts > 0) " · pensou $thoughts tokens" else "")
     }
 
     companion object {

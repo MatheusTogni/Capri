@@ -3,6 +3,7 @@ package com.capri.assistente
 import android.Manifest
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -37,6 +38,7 @@ class MainActivity : NeonActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
+        CapriBus.init(this)
         applyWindowColors()
 
         val pad = dp(16)
@@ -77,6 +79,12 @@ class MainActivity : NeonActivity() {
             setLineSpacing(0f, 1.15f)
         }
         root.addView(panel(Neon.GREEN).apply { addView(logView) }, blockParams(dp(8)))
+        root.addView(LinearLayout(this).apply {
+            addView(neonButton("Compartilhar", Neon.GREEN).apply { setOnClickListener { shareHistory() } },
+                LinearLayout.LayoutParams(0, dp(46), 1f))
+            addView(neonButton("Limpar", Neon.RED).apply { setOnClickListener { confirmClear() } },
+                LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginStart = dp(10) })
+        }, blockParams(dp(10)))
 
         setContentView(ScrollView(this).apply {
             setBackgroundColor(Neon.BG)
@@ -159,6 +167,32 @@ class MainActivity : NeonActivity() {
         startForegroundService(Intent(this, CapriService::class.java))
         CapriBus.running = true
         render()
+    }
+
+    // ---------- histórico ----------
+
+    /** Manda o histórico inteiro (o do arquivo, não só o da tela) para outro app. */
+    private fun shareHistory() {
+        CapriBus.fullHistory { text ->
+            if (text.isBlank()) {
+                Toast.makeText(this, "O histórico está vazio.", Toast.LENGTH_SHORT).show()
+                return@fullHistory
+            }
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, "Histórico da Capri")
+                putExtra(Intent.EXTRA_TEXT, text)
+            }
+            startActivity(Intent.createChooser(send, "Compartilhar histórico"))
+        }
+    }
+
+    private fun confirmClear() {
+        AlertDialog.Builder(this)
+            .setMessage("Apagar todo o histórico da Capri?")
+            .setPositiveButton("Apagar") { _, _ -> CapriBus.clearHistory() }
+            .setNegativeButton("Cancelar", null)
+            .show()
     }
 
     // ---------- peças visuais ----------

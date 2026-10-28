@@ -85,6 +85,7 @@ class CapriService : Service() {
 
     private fun init() {
         prefs = Prefs(this)
+        CapriBus.init(this)
         createChannel()
         val n = buildNotification("Carregando...")
         if (Build.VERSION.SDK_INT >= 29) {
@@ -104,7 +105,12 @@ class CapriService : Service() {
             if (st == TextToSpeech.SUCCESS) {
                 tts?.setLanguage(Locale("pt", "BR"))
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(id: String?) {}
+                    override fun onStart(id: String?) {
+                        main.post {
+                            Timing.mark("voz")
+                            Timing.summary()?.let { CapriBus.log("⏱️ $it") }
+                        }
+                    }
                     override fun onDone(id: String?) { main.post { afterSpeaking() } }
                     @Deprecated("Deprecated in Java")
                     override fun onError(id: String?) { main.post { afterSpeaking() } }
@@ -259,6 +265,8 @@ class CapriService : Service() {
         val interrupted = mode == Mode.SPEAKING
         mode = Mode.ASKING
         followUp = false
+        Timing.reset()
+        Timing.mark("inicio")
         stopVosk()
         if (interrupted) stopSpeaking()
         beep(ToneGenerator.TONE_PROP_BEEP)
@@ -277,11 +285,11 @@ class CapriService : Service() {
         androidRecognizer = sr
         var done = false
         sr.setRecognitionListener(object : android.speech.RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onReadyForSpeech(params: Bundle?) { Timing.mark("micPronto") }
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
+            override fun onEndOfSpeech() { Timing.mark("fimFala") }
             override fun onEvent(eventType: Int, params: Bundle?) {}
 
             override fun onPartialResults(partialResults: Bundle?) {
@@ -344,6 +352,8 @@ class CapriService : Service() {
         stopVosk()
         mode = Mode.ASKING
         followUp = true
+        Timing.reset()
+        Timing.mark("inicio")
         setStatus("Pode falar...")
         main.postDelayed({ if (mode == Mode.ASKING) startAndroidRecognizer() }, 250)
     }
@@ -364,6 +374,7 @@ class CapriService : Service() {
     // ---------- 3. Gemini ----------
 
     private fun handleQuestion(q: String) {
+        Timing.mark("pergunta")
         mode = Mode.THINKING
         followUp = false
         CapriBus.log("🗣️ Você: $q")
@@ -481,6 +492,8 @@ class CapriService : Service() {
     private fun listenForChoice() {
         stopVosk()
         mode = Mode.ASKING
+        Timing.reset()
+        Timing.mark("inicio")
         beep(ToneGenerator.TONE_PROP_BEEP)
         setStatus("Pode falar...")
         main.postDelayed({ if (mode == Mode.ASKING) startAndroidRecognizer() }, 300)
@@ -510,6 +523,7 @@ class CapriService : Service() {
     // ---------- 4. Falar ----------
 
     private fun speak(text: String) {
+        Timing.mark("resposta")
         mode = Mode.SPEAKING
         CapriBus.log("🤖 Capri: $text")
         val clean = text.replace(Regex("[*#_`>|]"), " ").take(3900)

@@ -4,9 +4,14 @@ import android.content.Context
 import android.content.res.AssetManager
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import java.io.File
 import java.io.FileOutputStream
 import java.text.Normalizer
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.Executors
 
 /** Remove acentos e deixa minúsculo, para comparar palavras. */
 fun normalize(s: String): String =
@@ -76,6 +81,11 @@ object CapriBus {
     private val main = Handler(Looper.getMainLooper())
     private val lines = ArrayDeque<String>()
 
+    // histórico salvo em arquivo: uma thread só, então leitura e gravações acontecem na ordem
+    private val io = Executors.newSingleThreadExecutor()
+    private var file: File? = null
+    private val stamp = SimpleDateFormat("dd/MM HH:mm:ss", Locale("pt", "BR"))
+
     var status = "Desligada"; private set
     var heard = ""; private set
     @Volatile var running = false
@@ -92,11 +102,90 @@ object CapriBus {
     fun bar(visible: Boolean) { barVisible = visible; main.post { onBar?.invoke() } }
     fun heard(s: String) = main.post { heard = s; onChange?.invoke() }
     fun log(s: String) = main.post {
-        lines.addFirst(s)
-        while (lines.size > 40) lines.removeLast()
+        // uma linha por registro, para o arquivo continuar legível
+        val line = stamp.format(Date()) + " " + s.replace(Regex("\\s*\\n\\s*"), " ")
+        lines.addFirst(line)
+        while (lines.size > SHOWN) lines.removeLast()
         onChange?.invoke()
+        file?.let { f -> io.execute { append(f, line) } }
     }
     fun logText(): String = lines.joinToString("\n\n")
+
+    /** Liga o histórico ao arquivo e carrega o que ficou de antes (só na primeira chamada). */
+    fun init(ctx: Context) = main.post {
+        if (file != null) return@post
+        val f = File(ctx.filesDir, "historico.txt")
+        file = f
+        io.execute {
+            val old = try { if (f.exists()) f.readLines(Charsets.UTF_8) else emptyList() } catch (_: Exception) { emptyList() }
+            main.post {
+                // tudo do arquivo é mais antigo do que o que foi registrado enquanto ele carregava
+                old.asReversed().take(SHOWN).forEach { if (lines.size < SHOWN) lines.addLast(it) }
+                onChange?.invoke()
+            }
+        }
+    }
+
+    /** Histórico inteiro (até [KEPT] linhas), do mais antigo para o mais novo. */
+    fun fullHistory(callback: (String) -> Unit) {
+        val f = file
+        io.execute {
+            val text = try { if (f != null && f.exists()) f.readText(Charsets.UTF_8) else "" } catch (_: Exception) { "" }
+            main.post { callback(text) }
+        }
+    }
+
+    fun clearHistory() = main.post {
+        lines.clear()
+        onChange?.invoke()
+        file?.let { f -> io.execute { f.delete() } }
+    }
+
+    private fun append(f: File, line: String) {
+        try {
+            f.appendText(line + "\n", Charsets.UTF_8)
+            if (f.length() > MAX_BYTES) f.writeText(f.readLines(Charsets.UTF_8).takeLast(KEPT).joinToString("\n", postfix = "\n"), Charsets.UTF_8)
+        } catch (_: Exception) {}
+    }
+
+    private const val SHOWN = 40 // na tela
+    private const val KEPT = 500 // no arquivo, depois de cortar
+    private const val MAX_BYTES = 80_000L
+}
+
+/**
+ * Quanto tempo cada etapa de uma pergunta levou, para achar onde a Capri demora.
+ * Marcas que não aconteceram (ex.: pergunta ouvida pelo Vosk) só ficam fora do resumo.
+ */
+object Timing {
+    private val marks = HashMap<String, Long>()
+
+    @Synchronized fun reset() = marks.clear()
+
+    /** Guarda só a primeira vez de cada marca. */
+    @Synchronized fun mark(name: String) { marks.putIfAbsent(name, SystemClock.elapsedRealtime()) }
+
+    /** "mic 650ms · silêncio 1.4s · ..." e zera as marcas; null se não houver o que mostrar. */
+    @Synchronized fun summary(): String? {
+        val parts = STEPS.mapNotNull { (label, from, to) ->
+            val a = marks[from]; val b = marks[to]
+            if (a != null && b != null) "$label ${fmt(b - a)}" else null
+        }
+        marks.clear()
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
+
+    fun fmt(ms: Long): String = if (ms < 1000) "${ms}ms" else String.format(Locale.US, "%.1fs", ms / 1000.0)
+
+    // (rótulo, de, até)
+    private val STEPS = listOf(
+        Triple("mic", "inicio", "micPronto"),       // bipe + abrir o reconhecedor
+        Triple("fala", "micPronto", "fimFala"),     // a pessoa falando
+        Triple("silêncio", "fimFala", "pergunta"),  // reconhecedor esperando confirmar o fim
+        Triple("resposta", "pergunta", "resposta"), // Gemini (ou comando local)
+        Triple("voz", "resposta", "voz"),           // até o som começar a sair
+        Triple("total", "inicio", "voz"),
+    )
 }
 
 /** Copia o modelo do Vosk de dentro do APK para a memória do app (só na primeira vez). */
