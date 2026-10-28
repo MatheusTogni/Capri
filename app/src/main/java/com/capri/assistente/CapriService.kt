@@ -707,7 +707,14 @@ class CapriService : Service() {
         val type = if (Build.VERSION.SDK_INT >= 29) foregroundServiceType.toString() else "?"
         val notif = (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
             .activeNotifications.any { it.id == NOTIF_ID }
-        return "[imp=${p.importance} tipo=$type notif=${if (notif) "sim" else "não"} android=${Build.VERSION.SDK_INT}]"
+        // restrito em segundo plano: o Android rebaixa o serviço ao sair do app e ignora o startForeground
+        val restricted = if (Build.VERSION.SDK_INT >= 28)
+            (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).isBackgroundRestricted else false
+        // 10 ativo, 20 uso frequente, 30 frequente, 40 raro, 45 restrito
+        val bucket = if (Build.VERSION.SDK_INT >= 28)
+            (getSystemService(USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager).appStandbyBucket.toString() else "?"
+        return "[imp=${p.importance} tipo=$type notif=${if (notif) "sim" else "não"} " +
+            "restrito=${if (restricted) "sim" else "não"} balde=$bucket android=${Build.VERSION.SDK_INT}]"
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
