@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- janelinha "deixar sempre em segundo plano" (fica "Sem restrições" no uso da bateria) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Ligações pelo WhatsApp: achar o contato e abrir a chamada com o app em segundo plano -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- o WhatsApp exige isso de quem abre a tela de chamada dele -->

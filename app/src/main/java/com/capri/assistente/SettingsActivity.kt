@@ -179,6 +179,7 @@ class SettingsActivity : NeonActivity() {
         val runtime: String? = null,
         val check: (() -> Boolean)? = null,
         val screen: (() -> Intent)? = null,
+        val fallback: (() -> Intent)? = null, // se o celular não tiver a [screen]
     )
 
     private fun perms(): List<Perm> = buildList {
@@ -198,7 +199,9 @@ class SettingsActivity : NeonActivity() {
             screen = { Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")) }))
         add(Perm("Fora da economia de bateria", "O Android não desligar a Capri em segundo plano.",
             check = { getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName) },
-            screen = { Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS) }))
+            // só "Sem restrições" conta; "Otimizado" (chave ligada na tela do app) ainda economiza bateria
+            screen = { Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")) },
+            fallback = { Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS) }))
     }
 
     private fun granted(p: Perm): Boolean =
@@ -206,14 +209,15 @@ class SettingsActivity : NeonActivity() {
 
     private fun request(p: Perm) {
         if (p.runtime != null) requestPermissions(arrayOf(p.runtime), REQ_PERM)
-        else openScreen(p.screen!!())
+        else openScreen(p.screen!!(), p.fallback?.invoke())
     }
 
-    private fun openScreen(intent: Intent) {
-        try {
-            startActivity(intent)
-        } catch (e: Exception) {
-            startActivity(Intent(Settings.ACTION_SETTINGS))
+    private fun openScreen(intent: Intent, fallback: Intent? = null) {
+        for (i in listOfNotNull(intent, fallback, Intent(Settings.ACTION_SETTINGS))) {
+            try {
+                startActivity(i)
+                return
+            } catch (_: Exception) {}
         }
     }
 
