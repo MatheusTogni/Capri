@@ -2,7 +2,7 @@
 
 Assistente de voz para Android em português, ativada pela palavra **"Capri"**. A escuta da palavra de ativação é 100% offline; as perguntas são respondidas por IA (Gemini, com o Groq de reserva), que também pode agir no celular: ligar pelo WhatsApp, pesquisar na web, criar alarmes, mexer na lanterna e no volume e cuidar de uma lista de tarefas.
 
-[![Baixar APK](https://img.shields.io/github/v/release/MatheusTogni/capri?label=baixar%20APK&logo=android&color=e0234e)](https://github.com/MatheusTogni/capri/releases/latest)
+[![Baixar APK](https://img.shields.io/badge/baixar-APK-e0234e?logo=android&logoColor=white)](https://github.com/MatheusTogni/capri/releases/latest)
 ![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3ddc84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.0-7f52ff?logo=kotlin&logoColor=white)
 ![Vosk](https://img.shields.io/badge/Vosk-offline-555)
