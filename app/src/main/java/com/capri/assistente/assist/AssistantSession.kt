@@ -16,6 +16,8 @@ import android.widget.FrameLayout
 import com.capri.assistente.CapriBarView
 import com.capri.assistente.CapriBus
 import com.capri.assistente.CapriService
+import com.capri.assistente.GlitchView
+import com.capri.assistente.Prefs
 
 /**
  * É isto que faz a Capri aparecer em "App de assistente digital". Escolhida lá, o botão de ligar
@@ -38,16 +40,22 @@ class CapriSession(ctx: Context) : VoiceInteractionSession(ctx) {
 
     private val main = Handler(Looper.getMainLooper())
     private var bar: CapriBarView? = null
+    private var glitch: GlitchView? = null
     private var seenBar = false // a barra já apareceu; quando sumir, a conversa acabou
     private val barListener: () -> Unit = { update() }
     private val giveUp = Runnable { if (!CapriBus.barVisible) hide() } // o serviço não acordou
 
     override fun onCreateContentView(): View {
         val d = context.resources.displayMetrics.density
+        val g = GlitchView(context).also { glitch = it }
         val b = CapriBarView(context).also { bar = it; it.setStatus(WAKING) }
         return FrameLayout(context).apply {
-            setPadding((16 * d).toInt(), 0, (16 * d).toInt(), (48 * d).toInt())
-            addView(b, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
+            // o efeito cobre a tela toda; o mínimo evita a janela encolher até a altura da barra
+            minimumHeight = context.resources.displayMetrics.heightPixels
+            addView(g, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            addView(b, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM).apply {
+                setMargins((16 * d).toInt(), 0, (16 * d).toInt(), (48 * d).toInt())
+            })
             setOnClickListener { dismiss() } // toque fora da barra fecha
         }
     }
@@ -57,6 +65,10 @@ class CapriSession(ctx: Context) : VoiceInteractionSession(ctx) {
         CapriBus.init(context)
         CapriBus.onBar = barListener
         seenBar = false
+        if (Prefs(context).glitchFx) {
+            glitch?.start()
+            bar?.glitchIn()
+        }
         update()
         main.postDelayed(giveUp, GIVE_UP_MS)
         try {
@@ -92,14 +104,19 @@ class CapriSession(ctx: Context) : VoiceInteractionSession(ctx) {
             CapriBus.barVisible -> {
                 seenBar = true
                 bar?.setStatus(CapriBus.status)
+                glitch?.setStatus(CapriBus.status)
             }
             seenBar -> hide() // o serviço terminou a conversa
-            else -> bar?.setStatus(WAKING)
+            else -> {
+                bar?.setStatus(WAKING)
+                glitch?.setStatus(WAKING)
+            }
         }
     }
 
     private fun cleanup() {
         main.removeCallbacks(giveUp)
+        glitch?.stop()
         if (CapriBus.onBar === barListener) CapriBus.onBar = null
         seenBar = false
     }

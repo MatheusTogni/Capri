@@ -36,6 +36,7 @@ E também:
 - **Modo conversa** — depois de responder, ela ouve mais uma vez sem precisar segurar o botão de novo.
 - **Interromper** — apertar o botão de ligar de novo enquanto ela fala corta a resposta e ela volta a ouvir.
 - **Funciona com a tela bloqueada** — uma barra "ouvindo" aparece por cima de qualquer app e até da tela de bloqueio.
+- **Visual cyberpunk** — ao ser chamada, a tela ganha um efeito de glitch: clarão, faixas coloridas com os canais RGB separados, linhas de varredura, brilho nas bordas na cor do que ela está fazendo (ouvindo, pensando, falando) e um HUD que se "decodifica". Dá para desligar nas configurações.
 - **Voz personalizável** — escolha entre as vozes do celular e ajuste tom, velocidade e efeitos robóticos; ela tem volume próprio e abaixa a música enquanto fala.
 - **Saudações configuráveis** ("Fala aí!") no lugar do bipe.
 

@@ -1,5 +1,8 @@
 package com.capri.assistente
 
+import android.animation.Keyframe
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Outline
@@ -16,7 +19,7 @@ import android.widget.TextView
 import kotlin.math.abs
 import kotlin.math.sin
 
-/** Barrinha "a Capri está ouvindo" que aparece por cima de tudo depois da palavra de ativação. */
+/** Barrinha "a Capri está ouvindo" que aparece por cima de tudo quando ela é chamada pelo botão de ligar. */
 class CapriBarView(ctx: Context) : LinearLayout(ctx) {
 
     private val d = resources.displayMetrics.density
@@ -66,6 +69,22 @@ class CapriBarView(ctx: Context) : LinearLayout(ctx) {
                 bars.forEachIndexed { i, b -> b.scaleY = 0.3f + 0.7f * abs(sin(t + i * 0.8f)) }
             }
         }
+    }
+
+    /** Entrada com glitch: a barra pisca e treme de lado, como sinal ruim, e assenta. */
+    fun glitchIn() {
+        val alpha = PropertyValuesHolder.ofKeyframe(
+            "alpha",
+            Keyframe.ofFloat(0f, 0f), Keyframe.ofFloat(0.15f, 1f), Keyframe.ofFloat(0.3f, 0.15f),
+            Keyframe.ofFloat(0.45f, 1f), Keyframe.ofFloat(0.6f, 0.5f), Keyframe.ofFloat(0.8f, 1f),
+            Keyframe.ofFloat(1f, 1f)
+        )
+        val shift = PropertyValuesHolder.ofKeyframe(
+            "translationX",
+            Keyframe.ofFloat(0f, -18 * d), Keyframe.ofFloat(0.2f, 14 * d), Keyframe.ofFloat(0.4f, -8 * d),
+            Keyframe.ofFloat(0.6f, 5 * d), Keyframe.ofFloat(1f, 0f)
+        )
+        ObjectAnimator.ofPropertyValuesHolder(this, alpha, shift).apply { duration = 520 }.start()
     }
 
     fun setStatus(s: String) {

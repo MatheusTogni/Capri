@@ -157,7 +157,7 @@ class SettingsActivity : NeonActivity() {
         root.addView(toggle("Modo conversa (ouvir de novo após responder)", conversation) { conversation = it },
             LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(6) })
         var greetOn = prefs.greetOn
-        root.addView(toggle("Responder ao ser chamada (no lugar do bipe)", greetOn) { greetOn = it },
+        root.addView(toggle("Responder ao ser ativada (no lugar do bipe)", greetOn) { greetOn = it },
             LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(8) })
         root.addView(label("Frases de resposta (uma por linha; sorteia uma a cada chamada)"))
         val greetInput = input().apply {
@@ -173,6 +173,11 @@ class SettingsActivity : NeonActivity() {
             textSize = 12f
             setOnClickListener { greetInput.setText(Prefs.DEFAULT_GREETINGS) }
         }, LinearLayout.LayoutParams(MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
+
+        root.addView(label("Visual"))
+        var glitchFx = prefs.glitchFx
+        root.addView(toggle("Efeitos cyberpunk (glitch) ao chamar a Capri", glitchFx) { glitchFx = it },
+            LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(6) })
 
         root.addView(label("Histórico"))
         var debugLogs = prefs.debugLogs
@@ -190,6 +195,7 @@ class SettingsActivity : NeonActivity() {
                 prefs.conversationMode = conversation
                 prefs.greetOn = greetOn
                 prefs.greetings = greetInput.text.toString()
+                prefs.glitchFx = glitchFx
                 prefs.debugLogs = debugLogs
                 Toast.makeText(this@SettingsActivity, "Salvo!", Toast.LENGTH_SHORT).show()
                 finish()

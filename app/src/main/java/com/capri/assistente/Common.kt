@@ -50,12 +50,12 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("conversationMode", true)
         set(v) = sp.edit().putBoolean("conversationMode", v).apply()
 
-    /** Ao ser chamada, responde com uma frase da lista ("Fala aí!") em vez do bipe. */
+    /** Ao ser ativada, responde com uma frase da lista ("Fala aí!") em vez do bipe. */
     var greetOn: Boolean
         get() = sp.getBoolean("greetOn", true)
         set(v) = sp.edit().putBoolean("greetOn", v).apply()
 
-    /** Frases de resposta ao ser chamada, uma por linha. */
+    /** Frases de resposta ao ser ativada, uma por linha. */
     var greetings: String
         get() = sp.getString("greetings", DEFAULT_GREETINGS) ?: DEFAULT_GREETINGS
         set(v) = sp.edit().putString("greetings", v).apply()
@@ -83,6 +83,11 @@ class Prefs(ctx: Context) {
             .putInt("roboPitch", v.pitch).putInt("roboRate", v.rate)
             .putInt("roboMetal", v.metal).putInt("roboDigital", v.digital).putInt("roboEcho", v.echo)
             .apply()
+
+    /** Efeitos de glitch/cyberpunk na tela quando a Capri é chamada. */
+    var glitchFx: Boolean
+        get() = sp.getBoolean("glitchFx", true)
+        set(v) = sp.edit().putBoolean("glitchFx", v).apply()
 
     /** Mostra no histórico os detalhes técnicos (tempos, requisições, estado do serviço). */
     var debugLogs: Boolean
