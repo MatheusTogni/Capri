@@ -62,6 +62,16 @@ class Prefs(ctx: Context) {
 
     fun greetList(): List<String> = greetings.lines().map { it.trim() }.filter { it.isNotBlank() }
 
+    /**
+     * Frases que ela fala quando o usuário se despede ("valeu Capri", "tchau"), uma por linha, e encerra a conversa
+     * sem passar pela IA. Vazio = encerra sem falar nada.
+     */
+    var farewells: String
+        get() = sp.getString("farewells", DEFAULT_FAREWELLS) ?: DEFAULT_FAREWELLS
+        set(v) = sp.edit().putString("farewells", v).apply()
+
+    fun farewellList(): List<String> = farewells.lines().map { it.trim() }.filter { it.isNotBlank() }
+
     /** Volume da Capri em % do máximo, independente do volume de mídia do celular. */
     var volume: Int
         get() = sp.getInt("capriVolume", 70)
@@ -99,6 +109,12 @@ class Prefs(ctx: Context) {
         val DEFAULT_GREETINGS = listOf(
             "Fala aí!", "E aí?", "Opa, diz aí.", "Pode falar.", "Tô aqui.", "Tô ouvindo.",
             "Manda.", "Diz aí.", "Sim?", "Que foi?", "Oi! Em que posso ajudar?", "Pois não?",
+        ).joinToString("\n")
+
+        // servem para "valeu" e para "tchau", então nenhuma depende de qual das duas foi dita
+        val DEFAULT_FAREWELLS = listOf(
+            "De nada!", "Me deve essa.", "Tamo junto!", "Disponha!", "Imagina!", "Qualquer coisa, é só chamar.",
+            "Fechou!", "Falou!", "Até mais!", "Tô por aqui.", "Sempre às ordens.", "Depois eu cobro.",
         ).joinToString("\n")
     }
 }

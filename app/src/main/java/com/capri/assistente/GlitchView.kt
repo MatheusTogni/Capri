@@ -24,7 +24,9 @@ import kotlin.math.sin
  * Efeito cyberpunk de tela cheia que aparece por cima de tudo quando a Capri é chamada.
  * Só desenha (não toca em nada e não pega toques): brilho nas bordas na cor do status, linhas de varredura,
  * um feixe que desce a tela, cantoneiras de HUD, um texto que se "decodifica" e rajadas de glitch
- * (faixas coloridas com canais RGB separados) — uma forte ao ativar, depois algumas curtas e espaçadas.
+ * (faixas coloridas com canais RGB separados) — uma forte ao ativar, depois uma curta que já some junto.
+ *
+ * Só dura a entrada ([DURATION_MS]): some sozinho e a tela fica livre durante o resto da conversa.
  *
  * Os ajustes estão nas constantes do fim do arquivo.
  */
@@ -102,7 +104,7 @@ class GlitchView(ctx: Context) : View(ctx) {
         invalidate()
     }
 
-    /** O brilho das bordas acompanha o que a Capri está fazendo, e cada mudança dá um solavanco de glitch. */
+    /** O brilho das bordas acompanha o que a Capri está fazendo (e cada mudança dá um solavanco), enquanto o efeito dura. */
     fun setStatus(status: String) {
         val c = Neon.statusColor(status)
         if (c == color) return
@@ -139,7 +141,17 @@ class GlitchView(ctx: Context) : View(ctx) {
         if (w <= 0f || h <= 0f) return
         val now = SystemClock.uptimeMillis()
         val age = now - t0
+        if (age >= DURATION_MS) {
+            // acabou a entrada: não desenha mais nada nem pede outro quadro
+            running = false
+            slices.clear()
+            return
+        }
         tick(now, age, w, h)
+
+        // no fim o efeito inteiro esmaece, em vez de sumir de uma vez
+        val fade = ((DURATION_MS - age) / FADE_MS.toFloat()).coerceIn(0f, 1f)
+        val layer = if (fade < 1f) canvas.saveLayerAlpha(0f, 0f, w, h, (255 * fade).toInt()) else -1
 
         drawGlow(canvas, w, h, age)
 
@@ -165,6 +177,7 @@ class GlitchView(ctx: Context) : View(ctx) {
         drawCorners(canvas, w, h, age, now)
         drawHud(canvas, w, now)
 
+        if (layer >= 0) canvas.restoreToCount(layer)
         postInvalidateOnAnimation()
     }
 
@@ -302,6 +315,8 @@ class GlitchView(ctx: Context) : View(ctx) {
 
     private companion object {
         // ---- ajustes ----
+        const val DURATION_MS = 1900L // quanto o efeito dura desde que a Capri é chamada; depois some
+        const val FADE_MS = 500L // dos [DURATION_MS], o final em que ele esmaece
         const val INTRO_MS = 650L // rajada forte de entrada
         const val TICK_MS = 55L // de quanto em quanto tempo as faixas e o texto mudam
         const val FLASH_MS = 110L // clarão vermelho ao ativar

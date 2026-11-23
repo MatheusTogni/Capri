@@ -36,9 +36,10 @@ E também:
 - **Modo conversa** — depois de responder, ela ouve mais uma vez sem precisar segurar o botão de novo.
 - **Interromper** — apertar o botão de ligar de novo enquanto ela fala corta a resposta e ela volta a ouvir.
 - **Funciona com a tela bloqueada** — uma barra "ouvindo" aparece por cima de qualquer app e até da tela de bloqueio.
-- **Visual cyberpunk** — ao ser chamada, a tela ganha um efeito de glitch: clarão, faixas coloridas com os canais RGB separados, linhas de varredura, brilho nas bordas na cor do que ela está fazendo (ouvindo, pensando, falando) e um HUD que se "decodifica". Dá para desligar nas configurações.
+- **Visual cyberpunk** — só na entrada, ao ser chamada, a tela ganha um efeito de glitch de uns 2 segundos: clarão, faixas coloridas com os canais RGB separados, linhas de varredura, brilho nas bordas e um HUD que se "decodifica". Depois ele esmaece e a tela fica livre durante a conversa. Dá para desligar nas configurações.
 - **Voz personalizável** — escolha entre as vozes do celular e ajuste tom, velocidade e efeitos robóticos; ela tem volume próprio e abaixa a música enquanto fala.
 - **Saudações configuráveis** ("Fala aí!") no lugar do bipe.
+- **Despedida sem IA** — dizer "valeu Capri", "blz valeu", "tchau", "obrigado" (e variações) encerra a conversa na hora, sem gastar cota: ela responde com uma frase sorteada da lista de despedidas ("De nada!", "Me deve essa."...), editável nas configurações. Só vale se a frase for só despedida; "valeu, e que horas são?" continua sendo pergunta. Ficando em silêncio, ela encerra sem falar nada.
 
 ## Como funciona
 

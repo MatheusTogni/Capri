@@ -32,7 +32,8 @@ import java.util.Locale
  *  2. A saudação ("Fala aí!") ou um bipe, e o reconhecedor do Android (Google) ouve a pergunta.
  *  3. A pergunta vai para o Groq (se o modelo principal recusar, responde o reserva).
  *  4. A resposta é lida em voz alta. No modo conversa ela ouve de novo; senão, ou depois de um silêncio,
- *     o serviço desliga.
+ *     o serviço desliga. Se o usuário se despede ("valeu Capri", "tchau"), ela só responde com uma frase da lista
+ *     de despedidas ([Goodbye]) e desliga, sem passar pela IA; em silêncio, desliga sem falar nada.
  */
 class CapriService : Service() {
 
@@ -297,6 +298,9 @@ class CapriService : Service() {
         mode = Mode.THINKING
         followUp = false
         CapriBus.log("🗣️ Você: $q")
+
+        // despedida ("valeu Capri", "tchau"): encerra sem passar pela IA, até no meio de um "qual deles?"
+        if (Goodbye.matches(q)) { sayGoodbye(); return }
         setStatus("Pensando...")
 
         // resposta para "qual deles?" de uma ligação
@@ -352,6 +356,31 @@ class CapriService : Service() {
                 }
             }
         }.start()
+    }
+
+    /** O usuário se despediu: fala uma frase da lista e encerra (sem frase na lista, encerra calada). */
+    private fun sayGoodbye() {
+        // o que estava pendente ("qual deles?", "tem certeza?") é cancelado, nada é feito
+        pendingChoice = null
+        pendingTodo = null
+        pendingClear = false
+        val phrase = pickFarewell()
+        if (phrase == null) {
+            CapriBus.log("👋 Conversa encerrada pela despedida")
+            endConversation()
+            return
+        }
+        pendingShutdown = true
+        speak(phrase)
+    }
+
+    private var lastFarewell = ""
+
+    /** Frase aleatória da lista de despedidas (sem repetir a anterior); null = sem frases. */
+    private fun pickFarewell(): String? {
+        val all = prefs.farewellList()
+        if (all.isEmpty()) return null
+        return all.filter { it != lastFarewell }.ifEmpty { all }.random().also { lastFarewell = it }
     }
 
     // ---------- 2a. Comandos no celular ----------

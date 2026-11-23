@@ -174,9 +174,24 @@ class SettingsActivity : NeonActivity() {
             setOnClickListener { greetInput.setText(Prefs.DEFAULT_GREETINGS) }
         }, LinearLayout.LayoutParams(MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
 
+        root.addView(label("Frases de despedida (quando você diz \"valeu\", \"tchau\"...; uma por linha, sorteia uma; vazio = sai sem falar)"))
+        val farewellInput = input().apply {
+            setText(prefs.farewells)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            isSingleLine = false
+            minLines = 4
+            gravity = Gravity.TOP or Gravity.START
+        }
+        root.addView(farewellInput, blockParams(dp(6)))
+        root.addView(neonButton("↺ Despedidas padrão", Neon.MUTED).apply {
+            textSize = 12f
+            setOnClickListener { farewellInput.setText(Prefs.DEFAULT_FAREWELLS) }
+        }, LinearLayout.LayoutParams(MATCH_PARENT, dp(44)).apply { topMargin = dp(8) })
+
         root.addView(label("Visual"))
         var glitchFx = prefs.glitchFx
-        root.addView(toggle("Efeitos cyberpunk (glitch) ao chamar a Capri", glitchFx) { glitchFx = it },
+        root.addView(toggle("Efeito cyberpunk (glitch) na entrada, ao chamar a Capri", glitchFx) { glitchFx = it },
             LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(6) })
 
         root.addView(label("Histórico"))
@@ -195,6 +210,7 @@ class SettingsActivity : NeonActivity() {
                 prefs.conversationMode = conversation
                 prefs.greetOn = greetOn
                 prefs.greetings = greetInput.text.toString()
+                prefs.farewells = farewellInput.text.toString()
                 prefs.glitchFx = glitchFx
                 prefs.debugLogs = debugLogs
                 Toast.makeText(this@SettingsActivity, "Salvo!", Toast.LENGTH_SHORT).show()

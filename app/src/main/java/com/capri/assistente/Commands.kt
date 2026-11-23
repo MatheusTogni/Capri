@@ -96,6 +96,37 @@ object LocalCommands {
     }
 }
 
+/**
+ * Reconhece o usuário se despedindo ("valeu Capri", "blz valeu", "tchau", "obrigado, até mais") para encerrar
+ * a conversa sem passar pela IA. A frase inteira precisa ser só despedida: junto de uma pergunta
+ * ("valeu, e que horas são?") continua sendo pergunta.
+ */
+object Goodbye {
+
+    // pelo menos uma destas tem que estar na frase
+    private val KEY = setOf(
+        "tchau", "tchauzinho", "xau", "valeu", "valew", "vlw", "obrigado", "obrigada", "obrigadao", "brigado",
+        "brigada", "brigadao", "obg", "falou", "flw", "fui", "tmj", "ate",
+    )
+
+    // e o resto só pode ser enfeite: sozinhas, estas palavras não encerram nada ("beleza", "ok", "pode desligar")
+    private val FILLER = setOf(
+        "capri", "kapri", "capre", "capi", "capry",
+        "blz", "beleza", "ok", "okay", "certo", "show", "joia", "tranquilo", "ta", "bom", "bem", "entao", "ai",
+        "e", "a", "o", "eu", "pra", "por", "pela", "pelo", "tudo", "isso", "mesmo", "muito", "mto", "demais",
+        "ajuda", "dica", "pode", "desligar", "desliga", "encerrar", "encerra", "ja", "agora", "hoje", "so", "era",
+        "nessa", "logo", "mais", "tarde", "amanha", "depois", "proxima", "breve", "gente",
+    )
+
+    private const val MAX_WORDS = 8
+
+    fun matches(spoken: String): Boolean {
+        val words = normalize(spoken).split(" ").filter { it.isNotEmpty() }
+        if (words.isEmpty() || words.size > MAX_WORDS) return false
+        return words.any { it in KEY } && words.all { it in KEY || it in FILLER }
+    }
+}
+
 /** Executa um [Command] e devolve a frase que a Capri fala. */
 class CommandRunner(private val ctx: Context) {
 
@@ -109,7 +140,7 @@ class CommandRunner(private val ctx: Context) {
             Command.Today -> "Hoje é " + SimpleDateFormat("EEEE, d 'de' MMMM", ptBR).format(Date()) + "."
             is Command.Timer -> timer(c.seconds)
             is Command.Alarm -> alarm(c)
-            is Command.Todo, Command.Shutdown -> "" // o serviço trata antes de chegar aqui
+            is Command.Todo, Command.Shutdown -> "" // o serviço trata antes de chegar aqui (a despedida nem é um Command)
         }
     } catch (e: Exception) {
         CapriBus.log("❌ Comando falhou: ${e.message}")
