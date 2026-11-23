@@ -11,8 +11,9 @@ android {
         applicationId = "com.capri.assistente"
         minSdk = 26
         targetSdk = 34
-        versionCode = 16
-        versionName = "1.7.0"
+        val buildNumber = (project.findProperty("buildNumber") as String?)?.toIntOrNull()
+        versionCode = buildNumber ?: 16
+        versionName = if (buildNumber != null) "1.7.$buildNumber" else "1.7.0"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
@@ -40,6 +41,10 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 }
 

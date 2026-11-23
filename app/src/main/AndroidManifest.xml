@@ -16,6 +16,8 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Timer e alarme no app de relógio (o Android concede sem perguntar) -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <!-- Instalar as versões novas publicadas no GitHub (sempre com confirmação do usuário) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Necessário no Android 11+ para enxergar o reconhecedor de voz e o leitor de texto -->
     <queries>
@@ -64,5 +66,10 @@
             android:name=".CapriService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- resultado da instalação de uma atualização (confirmação, sucesso ou falha) -->
+        <receiver
+            android:name=".update.InstallResultReceiver"
+            android:exported="false" />
     </application>
 </manifest>

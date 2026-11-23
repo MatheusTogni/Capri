@@ -10,8 +10,11 @@ import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -24,8 +27,14 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.capri.assistente.update.Updater
 
 class MainActivity : NeonActivity() {
+
+    private lateinit var root: LinearLayout
+    private var updateCardView: View? = null
+    private var updateDismissed = false
+    private var installAfterPermission = false
 
     private lateinit var prefs: Prefs
     private lateinit var statusView: TextView
@@ -42,7 +51,7 @@ class MainActivity : NeonActivity() {
         applyWindowColors()
 
         val pad = dp(16)
-        val root = LinearLayout(this).apply {
+        root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad * 2)
         }
@@ -91,12 +100,20 @@ class MainActivity : NeonActivity() {
             isFillViewport = true
             addView(root)
         })
+        Updater.check()
     }
 
     override fun onResume() {
         super.onResume()
         CapriBus.uiVisible = true
         CapriBus.onChange = { render() }
+        Updater.listener = { refreshUpdateCard() }
+        Updater.onConfirm = { startActivity(it) }
+        if (installAfterPermission && packageManager.canRequestPackageInstalls()) {
+            installAfterPermission = false
+            Updater.download(this)
+        }
+        refreshUpdateCard()
         render()
     }
 
@@ -104,6 +121,8 @@ class MainActivity : NeonActivity() {
         super.onPause()
         CapriBus.uiVisible = false
         CapriBus.onChange = null
+        Updater.listener = null
+        Updater.onConfirm = null
         pulse?.cancel()
         pulse = null
     }
@@ -167,6 +186,84 @@ class MainActivity : NeonActivity() {
         startForegroundService(Intent(this, CapriService::class.java))
         CapriBus.running = true
         render()
+    }
+
+    // ---------- atualização ----------
+
+    /** Card no topo quando há versão nova no GitHub. Nada é baixado até tocar em "Atualizar". */
+    private fun updateCard(): View? {
+        val release = Updater.available ?: return null
+        if (updateDismissed) return null
+
+        val box = panel(Neon.GREEN)
+        box.addView(mono(11f, Neon.MUTED).apply { text = "// ATUALIZAÇÃO"; letterSpacing = 0.15f })
+        box.addView(mono(16f, Neon.GREEN).apply {
+            text = "Nova versão disponível"
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            setShadowLayer(8f, 0f, 0f, Neon.GREEN)
+        }, blockParams(dp(6)))
+        box.addView(mono(13f, Neon.TEXT).apply { text = "> atualizar para a v${release.versionName}?" }, blockParams(dp(4)))
+
+        if (release.notes.isNotEmpty()) {
+            box.addView(mono(12f, Neon.MUTED).apply {
+                text = release.notes
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+            }, blockParams(dp(6)))
+        }
+
+        val error = Updater.error
+        if (Updater.phase == Updater.Phase.FAILED && error != null) {
+            box.addView(mono(12f, Neon.RED).apply { text = "> $error" }, blockParams(dp(8)))
+        }
+
+        when (Updater.phase) {
+            Updater.Phase.DOWNLOADING ->
+                box.addView(mono(13f, Neon.CYAN).apply { text = "> baixando… ${Updater.progress}%_" }, blockParams(dp(12)))
+            Updater.Phase.INSTALLING -> {
+                box.addView(mono(13f, Neon.CYAN).apply { text = "> aguardando o instalador_" }, blockParams(dp(12)))
+                box.addView(neonButton("Tentar de novo", Neon.PURPLE).apply { setOnClickListener { startUpdate() } },
+                    LinearLayout.LayoutParams(MATCH_PARENT, dp(46)).apply { topMargin = dp(10) })
+            }
+            else -> {
+                box.addView(LinearLayout(this).apply {
+                    addView(neonButton("Agora não", Neon.MUTED).apply {
+                        setOnClickListener {
+                            updateDismissed = true
+                            refreshUpdateCard()
+                        }
+                    }, LinearLayout.LayoutParams(0, dp(46), 1f))
+                    val label = if (Updater.phase == Updater.Phase.FAILED) "Tentar de novo" else "Atualizar"
+                    addView(neonButton(label, Neon.GREEN, filled = true).apply { setOnClickListener { startUpdate() } },
+                        LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginStart = dp(10) })
+                }, blockParams(dp(12)))
+            }
+        }
+        box.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(16) }
+        return box
+    }
+
+    /** Troca só o card de atualização (progresso do download etc.), sempre no topo da tela. */
+    private fun refreshUpdateCard() {
+        updateCardView?.let { root.removeView(it) }
+        updateCardView = updateCard()?.also { root.addView(it, 0) }
+    }
+
+    private fun startUpdate() {
+        if (!packageManager.canRequestPackageInstalls()) {
+            AlertDialog.Builder(this)
+                .setTitle("Permitir atualizações")
+                .setMessage("Para instalar a versão nova, o Android precisa que a Capri tenha permissão para instalar apps. " +
+                    "Na próxima tela, ative \"Permitir desta fonte\" e volte para a Capri.")
+                .setPositiveButton("Abrir ajustes") { _, _ ->
+                    installAfterPermission = true
+                    startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+                }
+                .setNegativeButton("Cancelar", null)
+                .show()
+            return
+        }
+        Updater.download(this)
     }
 
     // ---------- histórico ----------

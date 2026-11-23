@@ -65,7 +65,8 @@ microfone ─▶ Vosk (offline, gramática restrita) ─"Capri"─▶ reconheced
 - **Processamento de áudio próprio**: a fala do TTS é gerada em PCM e passa por modulação em anel, redução de bits e eco antes de tocar no `AudioTrack`.
 - **Latência medida por etapa** (abrir o microfone, fala, silêncio, resposta da IA, início da voz) e registrada no histórico, para achar onde a resposta demora.
 - **Quase sem dependências**: só o Vosk (e o JNA, que ele usa). HTTP com `HttpURLConnection`, JSON com `org.json` e interface montada em código.
-- **CI/CD com GitHub Actions** — baixa o modelo de voz em português, compila e publica o APK em [Releases](https://github.com/MatheusTogni/capri/releases/latest) a cada push.
+- **CI/CD com GitHub Actions** — baixa o modelo de voz em português, compila e publica o APK em [Releases](https://github.com/MatheusTogni/capri/releases/latest) a cada push, numerando a versão pelo número da execução e publicando junto um `version.json`.
+- **Atualização dentro do app** ([`Updater.kt`](app/src/main/java/com/capri/assistente/update/Updater.kt)) — ao abrir, a Capri compara o `version.json` da release com a versão instalada e, se houver uma nova, mostra um card no topo da tela. O APK só é baixado quando você toca em *Atualizar*, e a instalação usa o `PackageInstaller` do Android, sempre com a confirmação do sistema.
 
 ## Privacidade
 
@@ -81,6 +82,8 @@ microfone ─▶ Vosk (offline, gramática restrita) ─"Capri"─▶ reconheced
 3. Libere as permissões listadas nas configurações, principalmente **microfone**, **aparecer sobre outros apps** e **bateria sem restrições**.
 4. Toque em **Ligar Capri** e diga "Capri".
 
+> Versões novas não precisam ser baixadas de novo pelo GitHub: quando sai uma, aparece um card no topo da tela da Capri. Toque em **Atualizar** e confirme a instalação (na primeira vez, o Android pede para permitir que a Capri instale apps). As configurações e o histórico continuam salvos.
+
 > Se ela não acordar, olhe a linha **"Ouvi:"** na tela enquanto fala "Capri" e adicione a palavra que aparecer em **Palavras de ativação**.
 
 ### Permissões
@@ -93,6 +96,7 @@ microfone ─▶ Vosk (offline, gramática restrita) ─"Capri"─▶ reconheced
 | Ignorar otimização de bateria | não ser encerrada pelo sistema |
 | Contatos e telefone *(opcionais)* | encontrar o contato e iniciar a chamada no WhatsApp |
 | Alarmes | criar timers e alarmes no app de relógio |
+| Instalar apps desconhecidos | instalar as versões novas pelo card de atualização (sempre com a sua confirmação) |
 
 ## Compilando
 

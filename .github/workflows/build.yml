@@ -32,14 +32,21 @@ jobs:
           ls app/src/main/assets/model
 
       - name: Compilar APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: gradle assembleDebug --no-daemon --stacktrace -PbuildNumber=${{ github.run_number }}
 
       - name: Publicar na página de Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk capri.apk
+          jq -n \
+            --argjson code "$BUILD_NUMBER" \
+            --arg name "1.7.$BUILD_NUMBER" \
+            --arg notes "$COMMIT_MESSAGE" \
+            '{versionCode: $code, versionName: $name, notes: $notes}' > version.json
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest capri.apk \
+          gh release create latest capri.apk version.json \
             --title "Capri (build #${{ github.run_number }})" \
             --notes "APK gerado automaticamente. Baixe o capri.apk pelo celular e instale."
