@@ -2,6 +2,7 @@ package com.capri.assistente
 
 import android.Manifest
 import android.app.AlertDialog
+import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -41,6 +42,7 @@ class SettingsActivity : NeonActivity() {
     private val fxRefresh = mutableListOf<() -> Unit>() // redesenha as barras depois do "Restaurar"
     private lateinit var permsHeader: Button
     private lateinit var permsBox: LinearLayout
+    private lateinit var assistBox: LinearLayout
     private var permsOpen = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -196,6 +198,11 @@ class SettingsActivity : NeonActivity() {
             }
         }, LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(18) })
 
+        // ---- botão de ligar: a Capri como assistente do celular ----
+        root.addView(label("Botão de ligar"))
+        assistBox = panel(Neon.CYAN)
+        root.addView(assistBox, blockParams(dp(6)))
+
         // ---- permissões: lista que abre e fecha, com o que está OK e o que falta ----
         root.addView(label("Permissões"))
         permsHeader = neonButton("", Neon.GREEN).apply {
@@ -223,6 +230,31 @@ class SettingsActivity : NeonActivity() {
         // atualiza ao voltar da tela de permissão do Android (ou de baixar vozes)
         refreshPerms()
         refreshVoice()
+        refreshAssist()
+    }
+
+    /** A Capri é o "App de assistente digital" do celular (o que o botão de ligar chama)? */
+    private fun isAssistant(): Boolean =
+        Build.VERSION.SDK_INT >= 29 &&
+            try { getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT) } catch (_: Exception) { false }
+
+    private fun refreshAssist() {
+        val on = isAssistant()
+        assistBox.removeAllViews()
+        assistBox.addView(mono(14f, if (on) Neon.GREEN else Neon.YELLOW).apply {
+            text = if (on) "✓  A Capri é o assistente do celular" else "⚠  A Capri ainda não é o assistente do celular"
+        })
+        assistBox.addView(mono(11f, Neon.MUTED).apply {
+            text = "Segure o botão de ligar para chamar a Capri: o microfone só abre nessa hora, e ela não " +
+                "precisa ficar ligada ouvindo. Em \"App de assistente digital\", escolha a Capri."
+            setPadding(0, dp(4), 0, 0)
+        })
+        assistBox.addView(neonButton(if (on) "Trocar de assistente" else "Escolher a Capri", Neon.CYAN).apply {
+            textSize = 12f
+            setOnClickListener {
+                openScreen(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS), Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+            }
+        }, LinearLayout.LayoutParams(MATCH_PARENT, dp(44)).apply { topMargin = dp(10) })
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {

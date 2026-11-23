@@ -148,6 +148,15 @@ object CapriBus {
     @Volatile var barVisible = false
     var onBar: (() -> Unit)? = null
 
+    /**
+     * Janela do assistente (botão de ligar) aberta: é ela que mostra a barra, então o serviço
+     * não abre outra (flutuante nem BarActivity).
+     */
+    @Volatile var assistUi = false
+
+    /** O usuário fechou a janela do assistente no meio da conversa: o serviço para de ouvir e de falar. */
+    var onAssistCancel: (() -> Unit)? = null
+
     fun status(s: String) = main.post { status = s; onChange?.invoke(); onBar?.invoke() }
     fun bar(visible: Boolean) { barVisible = visible; main.post { onBar?.invoke() } }
     fun heard(s: String) = main.post { heard = s; onChange?.invoke() }

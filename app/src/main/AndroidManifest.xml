@@ -67,6 +67,40 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!--
+            Assistente do celular: escolhida em "App de assistente digital", a Capri é chamada ao segurar
+            o botão de ligar e o microfone só abre nessa hora. O Android exige a sessão e o reconhecedor
+            de voz junto do serviço principal (res/xml/voice_interaction.xml).
+        -->
+        <service
+            android:name=".assist.CapriInteractionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".assist.CapriSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+        <service
+            android:name=".assist.CapriRecognitionService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/recognition_service" />
+        </service>
+
         <!-- resultado da instalação de uma atualização (confirmação, sucesso ou falha) -->
         <receiver
             android:name=".update.InstallResultReceiver"

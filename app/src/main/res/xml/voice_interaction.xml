@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Faz a Capri aparecer em "App de assistente digital" nas configurações do Android -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.capri.assistente.assist.CapriSessionService"
+    android:recognitionService="com.capri.assistente.assist.CapriRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true" />

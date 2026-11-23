@@ -26,6 +26,7 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.view.WindowManager
+import com.capri.assistente.assist.Recognizers
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
@@ -39,6 +40,10 @@ import java.util.Locale
  *     Se ele falhar em segundo plano, o próprio Vosk ouve a pergunta.
  *  3. A pergunta vai para o Gemini (ou para o Groq, se o Gemini recusar).
  *  4. A resposta é lida em voz alta e volta para o passo 1.
+ *
+ * Pelo botão de ligar (a Capri como assistente do celular) é diferente: o serviço acorda já no passo 2,
+ * sem Vosk ouvindo, faz só aquela conversa e desliga ([oneShot]). O microfone não fica aberto entre uma
+ * chamada e outra. Se a escuta contínua já estiver ligada, o botão só vale como dizer a palavra de ativação.
  */
 class CapriService : Service() {
 
@@ -50,6 +55,9 @@ class CapriService : Service() {
     private var initialized = false
     private var destroyed = false
     private var mode = Mode.LOADING
+    private var oneShot = false // ligada pelo botão de ligar: uma conversa e desliga, sem escuta contínua
+    private var assistPending = false // oneShot esperando a voz (TTS) ficar pronta para começar
+    private var turn = 0 // muda quando a conversa é fechada: a resposta da IA que ainda vem a caminho é descartada
 
     private var model: Model? = null
     private var speechService: SpeechService? = null
@@ -81,11 +89,55 @@ class CapriService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_ASSIST) {
+            if (!initialized) {
+                initialized = true
+                oneShot = true
+                assistPending = true
+                init()
+            } else {
+                assistNow()
+            }
+            return START_NOT_STICKY
+        }
         if (!initialized) {
             initialized = true
             init()
         }
         return START_NOT_STICKY
+    }
+
+    /** Botão de ligar apertado com a escuta contínua já ligada (ou no meio de uma conversa): vale como dizer "Capri". */
+    private fun assistNow() {
+        if (destroyed) return
+        // ouvindo, pensando ou em chamada: nada a fazer; falando: interrompe e ouve
+        if (mode == Mode.WAKE || mode == Mode.SPEAKING) onWake(byButton = true)
+    }
+
+    /** Começa a conversa pedida pelo botão, assim que a voz está pronta (ou depois de um tempo, sem ela). */
+    private fun beginAssist() {
+        if (!assistPending || destroyed) return
+        assistPending = false
+        onWake(byButton = true)
+    }
+
+    /** Conversa pelo botão terminou: fecha a barra e desliga, para o microfone não ficar aberto. */
+    private fun endOneShot() {
+        stopVosk()
+        hideBar()
+        CapriBus.debug("ℹ️ Conversa pelo botão terminada; microfone desligado.")
+        stopSelf()
+    }
+
+    /** O usuário fechou a janela do assistente no meio da conversa: para de ouvir e de falar. */
+    private fun cancelInteraction() {
+        if (destroyed || !CapriBus.barVisible) return
+        turn++ // a resposta da IA que ainda esteja a caminho não é mais falada
+        stopSpeaking()
+        destroyAndroidRecognizer()
+        followUp = false
+        CapriBus.log("✋ Fechada.")
+        listenForWake()
     }
 
     private fun init() {
@@ -95,7 +147,8 @@ class CapriService : Service() {
         createChannel()
         promote(buildNotification("Carregando..."))
         CapriBus.running = true
-        CapriBus.debug("ℹ️ Serviço iniciado. ${processInfo()}")
+        CapriBus.onAssistCancel = { cancelInteraction() }
+        CapriBus.debug("ℹ️ Serviço iniciado${if (oneShot) " pelo botão de ligar" else ""}. ${processInfo()}")
 
         wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "capri:escuta")
@@ -113,7 +166,10 @@ class CapriService : Service() {
             } else {
                 CapriBus.log("⚠️ Não consegui iniciar a voz (TTS) do celular.")
             }
+            beginAssist()
         }
+        // se a voz demorar demais, começa mesmo assim (com o bipe no lugar da saudação)
+        if (oneShot) main.postDelayed({ beginAssist() }, 2500)
 
         setStatus("Preparando o modelo de voz (a 1ª vez demora)...")
         Thread {
@@ -123,19 +179,21 @@ class CapriService : Service() {
                 main.post {
                     if (destroyed) { m.close(); return@post }
                     model = m
-                    CapriBus.log("✅ Capri pronta.")
-                    if (backgroundRestricted(this)) {
+                    if (!oneShot) CapriBus.log("✅ Capri pronta.")
+                    // pelo botão a Capri não fica ouvindo em segundo plano, então a restrição não atrapalha
+                    if (!oneShot && backgroundRestricted(this)) {
                         CapriBus.log("⚠️ O Android está restringindo a Capri em segundo plano: com o app fechado ela para de ouvir. Veja em Configurações → Permissões.")
                     }
                     val battery = (getSystemService(POWER_SERVICE) as PowerManager)
                         .isIgnoringBatteryOptimizations(packageName)
                     CapriBus.debug("ℹ️ Bateria: ${if (battery) "sem restrições" else "otimizada"}")
-                    listenForWake()
+                    if (!oneShot) listenForWake() // pelo botão, a conversa já começou (beginAssist)
                     main.postDelayed(callWatch, 2000)
                 }
             } catch (e: Throwable) {
                 CapriBus.log("❌ Erro ao carregar o modelo: ${e.message}")
-                main.post { stopSelf() }
+                // pelo botão o modelo só serve de reserva para a pergunta; o reconhecedor do Google segue valendo
+                main.post { if (!oneShot) stopSelf() }
             }
         }.start()
     }
@@ -144,6 +202,7 @@ class CapriService : Service() {
 
     private fun listenForWake() {
         if (destroyed) return
+        if (oneShot) { endOneShot(); return } // pelo botão não há palavra de ativação para esperar
         stopVosk()
         hideBar()
         if (inCall()) {
@@ -159,7 +218,11 @@ class CapriService : Service() {
 
     /** Retorna false se não conseguiu abrir o microfone (e agenda nova tentativa). */
     private fun startVosk(question: Boolean, timeoutMs: Int = 10_000): Boolean {
-        val m = model ?: return false
+        val m = model ?: run {
+            // modelo ainda carregando (ou falhou): sem ele não há como ouvir a pergunta por aqui
+            if (question) main.postDelayed({ noQuestion() }, 300)
+            return false
+        }
         session++
         val id = session
         return try {
@@ -261,7 +324,7 @@ class CapriService : Service() {
 
     // ---------- 2. Ouvir a pergunta ----------
 
-    private fun onWake() {
+    private fun onWake(byButton: Boolean = false) {
         val interrupted = mode == Mode.SPEAKING
         mode = Mode.ASKING
         followUp = false
@@ -269,7 +332,11 @@ class CapriService : Service() {
         Timing.mark("inicio")
         stopVosk()
         if (interrupted) stopSpeaking()
-        CapriBus.log(if (interrupted) "✋ Interrompida!" else "✨ Ativada!")
+        CapriBus.log(when {
+            interrupted -> "✋ Interrompida!"
+            byButton -> "🔘 Chamada pelo botão de ligar"
+            else -> "✨ Ativada!"
+        })
         setStatus("Pode falar...")
         showBar()
         val phrase = pickGreeting()
@@ -299,11 +366,15 @@ class CapriService : Service() {
     }
 
     private fun startAndroidRecognizer() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+        // Ao escolher a Capri como assistente, o Android pode trocar o reconhecedor padrão do celular pelo dela
+        // (que só repassa para o do Google): aqui vai direto no do Google, sem a volta.
+        val direct = Recognizers.forCapri(this)
+        if (direct == null && !SpeechRecognizer.isRecognitionAvailable(this)) {
             startVoskQuestion()
             return
         }
-        val sr = SpeechRecognizer.createSpeechRecognizer(this)
+        val sr = if (direct != null) SpeechRecognizer.createSpeechRecognizer(this, direct)
+        else SpeechRecognizer.createSpeechRecognizer(this)
         androidRecognizer = sr
         var done = false
         sr.setRecognitionListener(object : android.speech.RecognitionListener {
@@ -442,6 +513,7 @@ class CapriService : Service() {
         brain = b
         brainKeys = keys
 
+        val myTurn = turn
         Thread {
             // o motivo de cada falha já foi para o histórico (Brain)
             val reply = try {
@@ -449,13 +521,14 @@ class CapriService : Service() {
             } catch (e: Exception) {
                 Brain.Reply.Text(HttpErrors.spoken(e))
             }
+            // conversa fechada enquanto a IA pensava (turn mudou): descarta a resposta
             when (reply) {
-                is Brain.Reply.Text -> main.post { if (!destroyed) speak(reply.text) }
-                is Brain.Reply.Action -> main.post { if (!destroyed) runCommand(reply.command) }
+                is Brain.Reply.Text -> main.post { if (!destroyed && myTurn == turn) speak(reply.text) }
+                is Brain.Reply.Action -> main.post { if (!destroyed && myTurn == turn) runCommand(reply.command) }
                 is Brain.Reply.WhatsAppCall -> {
                     // null = sem permissão de contatos
                     val found = try { WhatsApp.find(this, reply.contact, reply.video) } catch (_: SecurityException) { null }
-                    main.post { if (!destroyed) onCallRequest(reply, found) }
+                    main.post { if (!destroyed && myTurn == turn) onCallRequest(reply, found) }
                 }
             }
         }.start()
@@ -527,6 +600,7 @@ class CapriService : Service() {
         try {
             WhatsApp.call(this, c)
             CapriBus.log("📞 ${if (c.video) "Vídeo" else "Ligação"} pelo WhatsApp: ${c.name}")
+            if (oneShot) { endOneShot(); return } // pelo botão não há o que retomar depois da chamada
             // o callWatch volta a ouvir quando a chamada acabar (ou se ela não começar)
             mode = Mode.PAUSED
             setStatus("Abrindo o WhatsApp...")
@@ -634,7 +708,8 @@ class CapriService : Service() {
         val clean = text.replace(Regex("[*#_`>|]"), " ").take(3900)
         speakingNorm = normalize(clean)
         // interromper: enquanto fala, o Vosk continua ouvindo só a palavra de ativação
-        if (prefs.bargeIn) { stopVosk(); startVosk(question = false) }
+        // (pelo botão não: o microfone fica fechado, e apertar o botão de novo já interrompe)
+        if (prefs.bargeIn && !oneShot) { stopVosk(); startVosk(question = false) }
         setStatus("Falando...")
         val t = tts
         val s = speaker
@@ -690,6 +765,8 @@ class CapriService : Service() {
 
     /** Desbloqueado: janela flutuante. Bloqueado/tela apagada: BarActivity (único jeito de passar do bloqueio). */
     private fun showBar() {
+        // chamada pelo botão de ligar: a janela do assistente já mostra a barra (e não precisa de permissão extra)
+        if (CapriBus.assistUi) { CapriBus.bar(true); return }
         if (!Settings.canDrawOverlays(this)) return
         CapriBus.bar(true)
         val locked = (getSystemService(KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
@@ -800,6 +877,7 @@ class CapriService : Service() {
     override fun onDestroy() {
         destroyed = true
         CapriBus.running = false
+        CapriBus.onAssistCancel = null
         main.removeCallbacksAndMessages(null)
         stopVosk()
         destroyAndroidRecognizer()
@@ -821,6 +899,8 @@ class CapriService : Service() {
                 ctx.getSystemService(android.app.ActivityManager::class.java).isBackgroundRestricted
 
         const val ACTION_STOP = "com.capri.assistente.STOP"
+        /** Enviada pela sessão do assistente quando o botão de ligar é segurado. */
+        const val ACTION_ASSIST = "com.capri.assistente.ASSIST"
         private const val CHANNEL = "capri_min"
         private const val NOTIF_ID = 1
     }

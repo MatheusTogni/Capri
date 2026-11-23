@@ -1,6 +1,6 @@
 # Capri 🎙️
 
-Assistente de voz para Android em português, ativada pela palavra **"Capri"**. A escuta da palavra de ativação é 100% offline; as perguntas são respondidas por IA (Gemini, com o Groq de reserva), que também pode agir no celular: ligar pelo WhatsApp, pesquisar na web, criar alarmes, mexer na lanterna e no volume e cuidar de uma lista de tarefas.
+Assistente de voz para Android em português, ativada pela palavra **"Capri"** ou, se você preferir o microfone desligado, **segurando o botão de ligar** do celular. A escuta da palavra de ativação é 100% offline; as perguntas são respondidas por IA (Gemini, com o Groq de reserva), que também pode agir no celular: ligar pelo WhatsApp, pesquisar na web, criar alarmes, mexer na lanterna e no volume e cuidar de uma lista de tarefas.
 
 [![Baixar APK](https://img.shields.io/badge/baixar-APK-e0234e?logo=android&logoColor=white)](https://github.com/MatheusTogni/capri/releases/latest)
 ![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3ddc84?logo=android&logoColor=white)
@@ -31,6 +31,7 @@ Assistente de voz para Android em português, ativada pela palavra **"Capri"**. 
 
 E também:
 
+- **Botão de ligar** — escolhida como "App de assistente digital" do celular, a Capri é chamada ao segurar o botão de ligar (o mesmo gesto que abre o Gemini). O microfone só abre nessa hora e fecha quando a conversa termina: não precisa deixar a escuta ligada. Pode ser usado junto com a palavra "Capri" ou no lugar dela.
 - **Modo conversa** — depois de responder, ela ouve mais uma vez sem precisar repetir "Capri".
 - **Interromper** — dizer "Capri" enquanto ela fala corta a resposta e ela volta a ouvir.
 - **Funciona com a tela bloqueada** — uma barra "ouvindo" aparece por cima de qualquer app e até da tela de bloqueio.
@@ -58,6 +59,7 @@ microfone ─▶ Vosk (offline, gramática restrita) ─"Capri"─▶ reconheced
 
 - **Palavra de ativação offline com [Vosk](https://alphacephei.com/vosk/)**, usando uma gramática restrita às palavras de ativação + `[unk]` — sem isso o modelo prefere palavras comuns parecidas a um nome como "Capri".
 - **Serviço em primeiro plano do tipo microfone** que continua ativo com o app fechado, com diagnóstico de quando o Android silencia o microfone, rebaixa o processo ou aplica restrição de bateria.
+- **Assistente do sistema sem escuta contínua** — um `VoiceInteractionService` (com sessão e reconhecedor, que o Android exige) coloca a Capri na lista de assistentes digitais. A sessão mostra a barrinha "ouvindo", o que mantém o app em primeiro plano e libera o microfone, e acorda o serviço principal em modo "uma conversa só": ele responde e se desliga. O reconhecedor de voz que acompanha o assistente apenas repassa os pedidos para o do Google, para não deixar outros apps sem reconhecimento de voz.
 - **Function calling** com 7 ferramentas (ligação no WhatsApp, pesquisa na web, lanterna, volume, timer, alarme, lista de tarefas) atrás de uma interface `AiProvider` comum a Gemini e Groq.
 - **Resiliência**: distingue cota esgotada, servidor sobrecarregado, timeout e chave inválida; tenta modelos reserva e depois o outro provedor com o mesmo histórico, e explica em voz alta quando nada responde.
 - **Comandos locais sem IA** (regex sobre o texto normalizado) para os pedidos mais comuns: resposta instantânea e sem gastar cota.
@@ -70,7 +72,7 @@ microfone ─▶ Vosk (offline, gramática restrita) ─"Capri"─▶ reconheced
 
 ## Privacidade
 
-- A palavra de ativação é reconhecida **só no celular**; nada sai do aparelho antes de você dizer "Capri".
+- A palavra de ativação é reconhecida **só no celular**; nada sai do aparelho antes de você dizer "Capri". Chamando pelo botão de ligar, o microfone nem chega a abrir antes de você apertar.
 - Depois disso, a pergunta é transcrita pelo reconhecedor de voz do Android e o **texto** vai para o Gemini (e para o Groq, se configurado).
 - As chaves de API ficam salvas apenas no aparelho, e o backup automático do Android está desativado.
 - O histórico do que ela ouviu e respondeu fica num arquivo local e pode ser apagado pelo app.
@@ -81,6 +83,7 @@ microfone ─▶ Vosk (offline, gramática restrita) ─"Capri"─▶ reconheced
 2. Na engrenagem (configurações), cole uma chave do Gemini — é gratuita em [aistudio.google.com](https://aistudio.google.com) → *Get API key*. Opcional: uma chave do [Groq](https://console.groq.com) como reserva.
 3. Libere as permissões listadas nas configurações, principalmente **microfone**, **aparecer sobre outros apps** e **bateria sem restrições**.
 4. Toque em **Ligar Capri** e diga "Capri".
+5. *(Opcional, para chamar pelo botão de ligar)* Nas configurações da Capri, em **Botão de ligar**, toque em *Escolher a Capri* e selecione-a em **App de assistente digital**. Depois é só segurar o botão de ligar. Nesse modo não é preciso tocar em *Ligar Capri*.
 
 > Versões novas não precisam ser baixadas de novo pelo GitHub: quando sai uma, aparece um card no topo da tela da Capri. Toque em **Atualizar** e confirme a instalação (na primeira vez, o Android pede para permitir que a Capri instale apps). As configurações e o histórico continuam salvos.
 
@@ -93,6 +96,7 @@ microfone ─▶ Vosk (offline, gramática restrita) ─"Capri"─▶ reconheced
 | Microfone e serviço em primeiro plano | ouvir a palavra de ativação e a pergunta |
 | Notificações | o Android exige uma notificação para usar o microfone em segundo plano |
 | Aparecer sobre outros apps | mostrar a barra "ouvindo" e abrir o WhatsApp ou o relógio com o app fechado |
+| Assistente digital padrão *(opcional)* | ser chamada pelo botão de ligar, com o microfone fechado nos demais momentos |
 | Ignorar otimização de bateria | não ser encerrada pelo sistema |
 | Contatos e telefone *(opcionais)* | encontrar o contato e iniciar a chamada no WhatsApp |
 | Alarmes | criar timers e alarmes no app de relógio |
