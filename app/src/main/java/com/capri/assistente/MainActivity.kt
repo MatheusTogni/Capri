@@ -33,7 +33,7 @@ class MainActivity : NeonActivity() {
 
     private lateinit var root: LinearLayout
     private var updateCardView: View? = null
-    private var updateDismissed = false
+    private var dismissedUpdate = 0 // versão que o usuário dispensou com "Agora não"; uma mais nova volta a aparecer
     private var installAfterPermission = false
 
     private lateinit var prefs: Prefs
@@ -105,7 +105,6 @@ class MainActivity : NeonActivity() {
             isFillViewport = true
             addView(root)
         })
-        Updater.check()
     }
 
     override fun onResume() {
@@ -120,6 +119,8 @@ class MainActivity : NeonActivity() {
             Updater.download(this)
         }
         refreshUpdateCard()
+        // a cada vez que a tela volta (o processo vive dias, por causa do assistente); o Updater limita a frequência
+        Updater.check()
         render()
     }
 
@@ -196,7 +197,7 @@ class MainActivity : NeonActivity() {
     /** Card no topo quando há versão nova no GitHub. Nada é baixado até tocar em "Atualizar". */
     private fun updateCard(): View? {
         val release = Updater.available ?: return null
-        if (updateDismissed) return null
+        if (release.versionCode == dismissedUpdate) return null
 
         val box = panel(Neon.GREEN)
         box.addView(mono(11f, Neon.MUTED).apply { text = "// ATUALIZAÇÃO"; letterSpacing = 0.15f })
@@ -232,7 +233,7 @@ class MainActivity : NeonActivity() {
                 box.addView(LinearLayout(this).apply {
                     addView(neonButton("Agora não", Neon.MUTED).apply {
                         setOnClickListener {
-                            updateDismissed = true
+                            dismissedUpdate = release.versionCode
                             refreshUpdateCard()
                         }
                     }, LinearLayout.LayoutParams(0, dp(46), 1f))

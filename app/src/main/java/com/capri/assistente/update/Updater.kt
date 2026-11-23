@@ -7,6 +7,7 @@ import android.content.pm.PackageInstaller
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.capri.assistente.BuildConfig
 import org.json.JSONObject
 import java.io.File
@@ -20,6 +21,7 @@ import java.net.URL
 object Updater {
 
     private const val BASE_URL = "https://github.com/MatheusTogni/Capri/releases/download/latest/"
+    private const val RECHECK_MS = 60_000L // intervalo mínimo entre duas checagens
 
     data class Release(val versionCode: Int, val versionName: String, val notes: String)
 
@@ -41,14 +43,21 @@ object Updater {
     var onConfirm: ((Intent) -> Unit)? = null
 
     private val main = Handler(Looper.getMainLooper())
-    private var checked = false
+    @Volatile private var checking = false
+    @Volatile private var lastCheck = 0L // elapsedRealtime da última checagem que deu certo
 
     private fun notifyChanged() = main.post { listener?.invoke() }
 
-    /** Procura uma versão nova uma vez por processo. */
+    /**
+     * Procura uma versão nova. A Capri é o assistente do celular, então o processo dela fica vivo por dias:
+     * não dá para checar só uma vez por processo. Quem chama (a tela principal, a cada vez que volta ao
+     * primeiro plano) pode chamar à vontade; só vai ao GitHub se a última checagem já tem mais de [RECHECK_MS].
+     */
     fun check() {
-        if (checked) return
-        checked = true
+        if (checking || phase == Phase.DOWNLOADING || phase == Phase.INSTALLING) return
+        val last = lastCheck
+        if (last != 0L && SystemClock.elapsedRealtime() - last < RECHECK_MS) return
+        checking = true
         Thread {
             try {
                 val json = JSONObject(httpGet(BASE_URL + "version.json").bufferedReader().use { it.readText() })
@@ -57,12 +66,20 @@ object Updater {
                     versionName = json.optString("versionName", json.getInt("versionCode").toString()),
                     notes = json.optString("notes", "").lineSequence().firstOrNull().orEmpty().trim()
                 )
-                if (release.versionCode > BuildConfig.VERSION_CODE) {
+                lastCheck = SystemClock.elapsedRealtime()
+                val newer = release.versionCode > BuildConfig.VERSION_CODE
+                // sai da frente se já estava instalada; troca se saiu outra ainda mais nova
+                if (newer && available?.versionCode != release.versionCode) {
                     available = release
+                    notifyChanged()
+                } else if (!newer && available != null) {
+                    available = null
                     notifyChanged()
                 }
             } catch (_: Exception) {
-                checked = false
+                // sem internet ou GitHub fora do ar: tenta de novo na próxima vez que a tela abrir
+            } finally {
+                checking = false
             }
         }.start()
     }
