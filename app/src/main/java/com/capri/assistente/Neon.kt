@@ -27,7 +27,7 @@ object Neon {
         status.startsWith("Pode falar") -> CYAN
         status.startsWith("Pensando") -> PURPLE
         status.startsWith("Falando") -> RED
-        status.startsWith("Desligada") -> MUTED
+        status.startsWith("Aguardando") -> MUTED
         else -> YELLOW
     }
 }

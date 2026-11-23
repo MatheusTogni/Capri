@@ -55,7 +55,6 @@ class CapriSession(ctx: Context) : VoiceInteractionSession(ctx) {
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
         CapriBus.init(context)
-        CapriBus.assistUi = true
         CapriBus.onBar = barListener
         seenBar = false
         update()
@@ -101,7 +100,6 @@ class CapriSession(ctx: Context) : VoiceInteractionSession(ctx) {
 
     private fun cleanup() {
         main.removeCallbacks(giveUp)
-        CapriBus.assistUi = false
         if (CapriBus.onBar === barListener) CapriBus.onBar = null
         seenBar = false
     }

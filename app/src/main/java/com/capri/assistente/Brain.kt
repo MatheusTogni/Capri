@@ -1,8 +1,8 @@
 package com.capri.assistente
 
 /**
- * Guarda a conversa e pergunta aos provedores em ordem (Gemini, depois Groq):
- * se um falhar (cota, servidor cheio, demora, erro), o próximo responde com o mesmo histórico.
+ * Guarda a conversa e pergunta aos provedores em ordem: se um falhar, o próximo responde com o mesmo histórico.
+ * Hoje só há o Groq, que já troca de modelo sozinho quando a cota de um acaba.
  */
 class Brain(private val providers: List<AiProvider>) {
 
@@ -59,7 +59,7 @@ class Brain(private val providers: List<AiProvider>) {
             firstOk(order) { it.search(system, "$question\n(pesquisar: $query)") }.second
                 .ifBlank { "Não achei nada sobre isso." }
         } catch (e: BusyException) {
-            if (e.kind == BusyException.Kind.QUOTA) "Acabou a cota grátis de pesquisa por agora. Tenta de novo daqui a pouco."
+            if (e.kind == BusyException.Kind.QUOTA) HttpErrors.spoken(e)
             else "Não consegui pesquisar agora. Tenta de novo daqui a pouco."
         } catch (_: Exception) {
             "Não consegui pesquisar agora. Tenta de novo daqui a pouco."
@@ -83,9 +83,14 @@ class Brain(private val providers: List<AiProvider>) {
     }
 
     private fun remember(answer: String) {
-        history.add("model" to answer)
-        // guarda só as últimas 10 trocas (pergunta + resposta)
-        while (history.size > 20) { history.removeAt(0); history.removeAt(0) }
+        // histórico enxuto: vai inteiro a cada pergunta e conta na cota de tokens por minuto
+        history.add("model" to answer.take(MAX_ANSWER))
+        while (history.size > MAX_HISTORY) { history.removeAt(0); history.removeAt(0) }
+    }
+
+    private companion object {
+        const val MAX_HISTORY = 12 // as últimas 6 trocas (pergunta + resposta)
+        const val MAX_ANSWER = 300 // caracteres de cada resposta guardada
     }
 
     private fun toCommand(name: String, a: org.json.JSONObject): Command? = when (name) {

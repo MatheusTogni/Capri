@@ -1,11 +1,14 @@
 package com.capri.assistente
 
 import android.app.Activity
+import android.app.role.RoleManager
+import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.os.Build
+import android.provider.Settings
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
@@ -20,6 +23,25 @@ abstract class NeonActivity : Activity() {
         window.statusBarColor = Neon.BG
         window.navigationBarColor = Neon.BG
     }
+
+    /** A Capri é o "App de assistente digital" do celular (o que o botão de ligar chama)? */
+    protected fun isAssistant(): Boolean =
+        Build.VERSION.SDK_INT >= 29 &&
+            try { getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT) } catch (_: Exception) { false }
+
+    /** Abre a primeira tela que existir (o nome da tela varia de um fabricante para outro). */
+    protected fun openScreen(intent: Intent, fallback: Intent? = null) {
+        for (i in listOfNotNull(intent, fallback, Intent(Settings.ACTION_SETTINGS))) {
+            try {
+                startActivity(i)
+                return
+            } catch (_: Exception) {}
+        }
+    }
+
+    /** Abre a tela do Android onde se escolhe o "App de assistente digital". */
+    protected fun openAssistantPicker() =
+        openScreen(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS), Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
 
     protected fun panel(border: Int) = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL

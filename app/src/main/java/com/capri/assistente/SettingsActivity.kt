@@ -2,7 +2,6 @@ package com.capri.assistente
 
 import android.Manifest
 import android.app.AlertDialog
-import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -10,7 +9,6 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
@@ -36,6 +34,10 @@ class SettingsActivity : NeonActivity() {
     private var voices: List<Voice> = emptyList()
     private var selectedVoice = ""
     private lateinit var voicePicker: TextView
+    private var groqModel = "" // modelos do Groq escolhidos na tela (salvos no "Salvar configurações")
+    private var groqBackup = ""
+    private lateinit var modelPicker: TextView
+    private lateinit var backupPicker: TextView
     private var speaker: RoboSpeaker? = null
     private var fx = RoboFx.CAPRI // ajustes da voz robótica na tela (salvos no "Salvar configurações")
     private var volume = 70 // volume da Capri na tela (idem)
@@ -67,36 +69,37 @@ class SettingsActivity : NeonActivity() {
             }, LinearLayout.LayoutParams(WRAP_CONTENT, dp(42)))
         })
 
-        root.addView(label("Chave da API do Gemini"))
-        val keyInput = input().apply {
-            setText(prefs.apiKey)
-            hint = "Cole aqui a chave do AI Studio"
+        root.addView(label("Chave da API do Groq"))
+        val groqInput = input().apply {
+            setText(prefs.groqKey)
+            hint = "Cole aqui a chave do console.groq.com"
             isSingleLine = true
             // inputType/transformação depois do isSingleLine, senão a chave aparece em texto puro
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             transformationMethod = PasswordTransformationMethod.getInstance()
             typeface = Typeface.MONOSPACE
         }
-        root.addView(keyInput, blockParams(dp(6)))
-
-        root.addView(label("Modelo do Gemini"))
-        val modelInput = input().apply { setText(prefs.model); isSingleLine = true }
-        root.addView(modelInput, blockParams(dp(6)))
-
-        root.addView(label("Chave do Groq (reserva, opcional)"))
-        val groqInput = input().apply {
-            setText(prefs.groqKey)
-            hint = "Responde quando o Gemini recusar (console.groq.com)"
-            isSingleLine = true
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            transformationMethod = PasswordTransformationMethod.getInstance()
-            typeface = Typeface.MONOSPACE
-        }
         root.addView(groqInput, blockParams(dp(6)))
+        root.addView(mono(11f, Neon.MUTED).apply {
+            text = "Use a conta no plano grátis. Quando a cota acaba, o Groq só recusa os pedidos e a Capri para de " +
+                "responder perguntas até a cota voltar (lanterna, volume, timer e lista continuam funcionando)."
+            setPadding(0, dp(4), 0, 0)
+        })
 
-        root.addView(label("Palavras de ativação (separadas por vírgula)"))
-        val wakeInput = input().apply { setText(prefs.wakeWords) }
-        root.addView(wakeInput, blockParams(dp(6)))
+        root.addView(label("Modelo principal"))
+        groqModel = prefs.groqModel
+        modelPicker = choiceBox {
+            pickGroq("Modelo principal", groqModel, allowNone = false) { groqModel = it; refreshGroqPickers() }
+        }
+        root.addView(modelPicker, blockParams(dp(6)))
+
+        root.addView(label("Modelo reserva (responde quando o principal recusa)"))
+        groqBackup = prefs.groqBackup
+        backupPicker = choiceBox {
+            pickGroq("Modelo reserva", groqBackup, allowNone = true) { groqBackup = it; refreshGroqPickers() }
+        }
+        root.addView(backupPicker, blockParams(dp(6)))
+        refreshGroqPickers()
 
         root.addView(label("Voz da Capri"))
         selectedVoice = prefs.voice
@@ -153,9 +156,6 @@ class SettingsActivity : NeonActivity() {
         var conversation = prefs.conversationMode
         root.addView(toggle("Modo conversa (ouvir de novo após responder)", conversation) { conversation = it },
             LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(6) })
-        var bargeIn = prefs.bargeIn
-        root.addView(toggle("Interromper dizendo a palavra de ativação", bargeIn) { bargeIn = it },
-            LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(8) })
         var greetOn = prefs.greetOn
         root.addView(toggle("Responder ao ser chamada (no lugar do bipe)", greetOn) { greetOn = it },
             LinearLayout.LayoutParams(MATCH_PARENT, dp(48)).apply { topMargin = dp(8) })
@@ -181,15 +181,13 @@ class SettingsActivity : NeonActivity() {
 
         root.addView(neonButton("Salvar configurações", Neon.GREEN).apply {
             setOnClickListener {
-                prefs.apiKey = keyInput.text.toString()
-                prefs.model = modelInput.text.toString()
                 prefs.groqKey = groqInput.text.toString()
-                prefs.wakeWords = wakeInput.text.toString()
+                prefs.groqModel = groqModel
+                prefs.groqBackup = groqBackup
                 prefs.voice = selectedVoice
                 prefs.robo = fx
                 prefs.volume = volume
                 prefs.conversationMode = conversation
-                prefs.bargeIn = bargeIn
                 prefs.greetOn = greetOn
                 prefs.greetings = greetInput.text.toString()
                 prefs.debugLogs = debugLogs
@@ -233,11 +231,6 @@ class SettingsActivity : NeonActivity() {
         refreshAssist()
     }
 
-    /** A Capri é o "App de assistente digital" do celular (o que o botão de ligar chama)? */
-    private fun isAssistant(): Boolean =
-        Build.VERSION.SDK_INT >= 29 &&
-            try { getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT) } catch (_: Exception) { false }
-
     private fun refreshAssist() {
         val on = isAssistant()
         assistBox.removeAllViews()
@@ -245,15 +238,13 @@ class SettingsActivity : NeonActivity() {
             text = if (on) "✓  A Capri é o assistente do celular" else "⚠  A Capri ainda não é o assistente do celular"
         })
         assistBox.addView(mono(11f, Neon.MUTED).apply {
-            text = "Segure o botão de ligar para chamar a Capri: o microfone só abre nessa hora, e ela não " +
-                "precisa ficar ligada ouvindo. Em \"App de assistente digital\", escolha a Capri."
+            text = "A Capri só acorda pelo botão de ligar: segure-o para chamá-la. O microfone só abre nessa hora. " +
+                "Em \"App de assistente digital\", escolha a Capri."
             setPadding(0, dp(4), 0, 0)
         })
         assistBox.addView(neonButton(if (on) "Trocar de assistente" else "Escolher a Capri", Neon.CYAN).apply {
             textSize = 12f
-            setOnClickListener {
-                openScreen(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS), Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
-            }
+            setOnClickListener { openAssistantPicker() }
         }, LinearLayout.LayoutParams(MATCH_PARENT, dp(44)).apply { topMargin = dp(10) })
     }
 
@@ -283,32 +274,20 @@ class SettingsActivity : NeonActivity() {
     )
 
     private fun perms(): List<Perm> = buildList {
-        add(Perm("Microfone", "Ouvir a palavra de ativação e o que você fala.",
+        add(Perm("Microfone", "Ouvir o que você fala depois de apertar o botão de ligar.",
             runtime = Manifest.permission.RECORD_AUDIO))
         add(Perm("Contatos", "Achar o contato para ligar pelo WhatsApp.",
             runtime = Manifest.permission.READ_CONTACTS))
         add(Perm("Ligações", "Abrir a chamada no WhatsApp.",
             runtime = Manifest.permission.CALL_PHONE))
         if (Build.VERSION.SDK_INT >= 33) {
-            add(Perm("Notificações", "Mostrar o aviso de que a Capri está ligada.",
+            add(Perm("Notificações", "O aviso que o Android exige enquanto a Capri conversa com você.",
                 runtime = Manifest.permission.POST_NOTIFICATIONS))
         }
-        // sem isso não aparece a barrinha "ouvindo" e o Android bloqueia abrir o WhatsApp em segundo plano
-        add(Perm("Aparecer sobre outros apps", "Barrinha \"ouvindo\" e abrir WhatsApp ou relógio com o app fechado.",
+        // sem isso o Android bloqueia abrir o WhatsApp ou o relógio quando o app não está aberto
+        add(Perm("Aparecer sobre outros apps", "Abrir o WhatsApp ou o relógio quando o app não está aberto.",
             check = { Settings.canDrawOverlays(this@SettingsActivity) },
             screen = { Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")) }))
-        add(Perm("Fora da economia de bateria", "O Android não desligar a Capri em segundo plano.",
-            check = { getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName) },
-            // só "Sem restrições" conta; "Otimizado" (chave ligada na tela do app) ainda economiza bateria
-            screen = { Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")) },
-            fallback = { Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS) }))
-        // marcação separada da de cima (pode estar ligada mesmo com "Sem restrições"): com ela o Android
-        // tira o serviço do primeiro plano ao sair do app e silencia o microfone
-        if (Build.VERSION.SDK_INT >= 28) {
-            add(Perm("Liberada em segundo plano", "Continuar ouvindo com o app fechado.",
-                check = { !CapriService.backgroundRestricted(this@SettingsActivity) },
-                screen = { Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")) }))
-        }
     }
 
     private fun granted(p: Perm): Boolean =
@@ -317,15 +296,6 @@ class SettingsActivity : NeonActivity() {
     private fun request(p: Perm) {
         if (p.runtime != null) requestPermissions(arrayOf(p.runtime), REQ_PERM)
         else openScreen(p.screen!!(), p.fallback?.invoke())
-    }
-
-    private fun openScreen(intent: Intent, fallback: Intent? = null) {
-        for (i in listOfNotNull(intent, fallback, Intent(Settings.ACTION_SETTINGS))) {
-            try {
-                startActivity(i)
-                return
-            } catch (_: Exception) {}
-        }
     }
 
     /** Redesenha o cabeçalho (X/Y OK) e, se estiver aberta, as linhas de cada permissão. */
@@ -404,6 +374,39 @@ class SettingsActivity : NeonActivity() {
             .setSingleChoiceItems(labels, values.indexOf(selectedVoice).coerceAtLeast(0)) { d, i ->
                 selectedVoice = values[i]
                 refreshVoice()
+                d.dismiss()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    /** Caixa clicável, com o visual do seletor de voz, que abre uma lista. */
+    private fun choiceBox(onClick: () -> Unit) = TextView(this).apply {
+        textSize = 15f
+        setTextColor(Neon.TEXT)
+        background = CutDrawable(Neon.PANEL, Neon.PURPLE, dp(1).toFloat(), dp(8).toFloat())
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        setOnClickListener { onClick() }
+    }
+
+    private fun groqLabel(id: String): String =
+        if (id.isBlank()) "Nenhum (sem reserva)" else Groq.CHOICES.firstOrNull { it.first == id }?.second ?: id
+
+    private fun refreshGroqPickers() {
+        modelPicker.text = "${groqLabel(groqModel)}   ▾"
+        backupPicker.text = "${groqLabel(groqBackup)}   ▾"
+    }
+
+    /** Lista dos modelos do Groq; [allowNone] acrescenta "Nenhum" (para a reserva). */
+    private fun pickGroq(title: String, current: String, allowNone: Boolean, onPick: (String) -> Unit) {
+        val ids = buildList {
+            Groq.CHOICES.forEach { add(it.first) }
+            if (allowNone) add("")
+        }
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle(title)
+            .setSingleChoiceItems(ids.map { groqLabel(it) }.toTypedArray(), ids.indexOf(current).coerceAtLeast(0)) { d, i ->
+                onPick(ids[i])
                 d.dismiss()
             }
             .setNegativeButton("Cancelar", null)

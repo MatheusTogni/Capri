@@ -23,14 +23,6 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Baixar modelo de voz em português (Vosk)
-        run: |
-          curl -fL -o model.zip https://alphacephei.com/vosk/models/vosk-model-small-pt-0.3.zip
-          unzip -q model.zip -d model_tmp
-          mkdir -p app/src/main/assets/model
-          cp -r model_tmp/*/* app/src/main/assets/model/
-          ls app/src/main/assets/model
-
       - name: Compilar APK
         run: gradle assembleDebug --no-daemon --stacktrace -PbuildNumber=${{ github.run_number }}
 

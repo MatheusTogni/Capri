@@ -7,8 +7,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- janelinha "deixar sempre em segundo plano" (fica "Sem restrições" no uso da bateria) -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Ligações pelo WhatsApp: achar o contato e abrir a chamada com o app em segundo plano -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- o WhatsApp exige isso de quem abre a tela de chamada dele -->
@@ -53,15 +51,7 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- barrinha "ouvindo" por cima da tela de bloqueio -->
-        <activity
-            android:name=".BarActivity"
-            android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:excludeFromRecents="true"
-            android:launchMode="singleInstance"
-            android:taskAffinity="" />
-
+        <!-- a conversa: ligada pela sessão do assistente, só fica de pé enquanto durar -->
         <service
             android:name=".CapriService"
             android:exported="false"
@@ -69,8 +59,8 @@
 
         <!--
             Assistente do celular: escolhida em "App de assistente digital", a Capri é chamada ao segurar
-            o botão de ligar e o microfone só abre nessa hora. O Android exige a sessão e o reconhecedor
-            de voz junto do serviço principal (res/xml/voice_interaction.xml).
+            o botão de ligar (é o único jeito de ativá-la) e o microfone só abre nessa hora. O Android exige
+            a sessão e o reconhecedor de voz junto do serviço principal (res/xml/voice_interaction.xml).
         -->
         <service
             android:name=".assist.CapriInteractionService"

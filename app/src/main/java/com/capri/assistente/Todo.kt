@@ -120,7 +120,7 @@ class TodoStore(ctx: Context) {
 }
 
 /**
- * Pedidos diretos da lista, entendidos sem o Gemini. Pega a tarefa do texto original
+ * Pedidos diretos da lista, entendidos sem a IA. Pega a tarefa do texto original
  * (com acentos) usando as palavras normalizadas para achar onde ela começa e termina.
  */
 object TodoParser {
@@ -143,7 +143,7 @@ object TodoParser {
     private val TRAIL = setOf("por", "favor", "ai", "pfv")
     private val READ = setOf("le", "leia", "ler", "fala", "fale", "diz", "diga", "mostra", "mostre", "quais", "qual",
         "que", "tem", "ve", "ver")
-    // ler/contar só se a frase não tiver mais nada ("quais filmes estão na lista do oscar" vai pro Gemini)
+    // ler/contar só se a frase não tiver mais nada ("quais filmes estão na lista do oscar" vai pra IA)
     private val QUESTION_OK = GLUE + READ + setOf("sao", "e", "esta", "estao", "ai", "ainda", "pendentes", "me", "eu",
         "tenho", "ha", "quantas", "quantos", "coisas", "por", "favor", "minha", "agora", "hoje")
 

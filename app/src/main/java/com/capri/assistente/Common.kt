@@ -1,12 +1,10 @@
 package com.capri.assistente
 
 import android.content.Context
-import android.content.res.AssetManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import java.io.File
-import java.io.FileOutputStream
 import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -24,22 +22,20 @@ fun normalize(s: String): String =
 class Prefs(ctx: Context) {
     private val sp = ctx.getSharedPreferences("capri", Context.MODE_PRIVATE)
 
-    var apiKey: String
-        get() = sp.getString("apiKey", "") ?: ""
-        set(v) = sp.edit().putString("apiKey", v.trim()).apply()
-
-    var model: String
-        get() = sp.getString("model", DEFAULT_MODEL)?.ifBlank { DEFAULT_MODEL } ?: DEFAULT_MODEL
-        set(v) = sp.edit().putString("model", v.trim()).apply()
-
-    /** Chave do Groq (opcional): responde quando o Gemini recusa. */
+    /** Chave do Groq (console.groq.com). */
     var groqKey: String
         get() = sp.getString("groqKey", "") ?: ""
         set(v) = sp.edit().putString("groqKey", v.trim()).apply()
 
-    var wakeWords: String
-        get() = sp.getString("wakeWords", DEFAULT_WAKE) ?: DEFAULT_WAKE
-        set(v) = sp.edit().putString("wakeWords", v).apply()
+    /** Modelo do Groq que responde primeiro. */
+    var groqModel: String
+        get() = sp.getString("groqModel", Groq.FAST)?.ifBlank { Groq.FAST } ?: Groq.FAST
+        set(v) = sp.edit().putString("groqModel", v.trim()).apply()
+
+    /** Modelo do Groq que responde quando o principal recusa (cota ou servidor cheio). Vazio = sem reserva. */
+    var groqBackup: String
+        get() = sp.getString("groqBackup", Groq.SMART) ?: Groq.SMART
+        set(v) = sp.edit().putString("groqBackup", v.trim()).apply()
 
     /**
      * Nome da voz do celular (ex.: "pt-br-x-afs-local"). Vazio = voz padrão do celular.
@@ -49,15 +45,10 @@ class Prefs(ctx: Context) {
         get() = sp.getString("phoneVoice", "") ?: ""
         set(v) = sp.edit().putString("phoneVoice", v.trim()).apply()
 
-    /** Depois de responder, ouve mais uma vez sem precisar da palavra de ativação. */
+    /** Depois de responder, ouve mais uma vez sem precisar apertar o botão de ligar de novo. */
     var conversationMode: Boolean
         get() = sp.getBoolean("conversationMode", true)
         set(v) = sp.edit().putBoolean("conversationMode", v).apply()
-
-    /** Dizer a palavra de ativação enquanto ela fala faz ela parar e ouvir. */
-    var bargeIn: Boolean
-        get() = sp.getBoolean("bargeIn", true)
-        set(v) = sp.edit().putBoolean("bargeIn", v).apply()
 
     /** Ao ser chamada, responde com uma frase da lista ("Fala aí!") em vez do bipe. */
     var greetOn: Boolean
@@ -98,26 +89,7 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("debugLogs", false)
         set(v) { sp.edit().putBoolean("debugLogs", v).apply(); CapriBus.debugLogs = v }
 
-    fun wakeList(): List<String> =
-        wakeWords.split(",").map { normalize(it) }.filter { it.isNotBlank() }
-
-    /**
-     * Gramática do Vosk para a escuta da palavra de ativação: ele só pode escolher entre
-     * as palavras de ativação ou "[unk]" (qualquer outra coisa). Sem isso o modelo prefere
-     * palavras comuns ("capa", "catarina") a nomes como "capri".
-     * Mantém os acentos, porque o vocabulário do modelo tem as palavras acentuadas.
-     */
-    fun wakeGrammar(): String {
-        val arr = org.json.JSONArray()
-        wakeWords.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }.distinct()
-            .forEach { arr.put(it) }
-        arr.put("[unk]")
-        return arr.toString()
-    }
-
     companion object {
-        const val DEFAULT_MODEL = "gemini-flash-latest"
-        const val DEFAULT_WAKE = "capri, cabri, capre, kapri, caprin"
         // curtas: ela só começa a ouvir a pergunta depois de terminar a frase
         val DEFAULT_GREETINGS = listOf(
             "Fala aí!", "E aí?", "Opa, diz aí.", "Pode falar.", "Tô aqui.", "Tô ouvindo.",
@@ -136,7 +108,10 @@ object CapriBus {
     private var file: File? = null
     private val stamp = SimpleDateFormat("dd/MM HH:mm:ss", Locale("pt", "BR"))
 
-    var status = "Desligada"; private set
+    /** Status quando não há conversa: a Capri só acorda pelo botão de ligar do celular. */
+    const val IDLE = "Aguardando o botão de ligar"
+
+    var status = IDLE; private set
     var heard = ""; private set
     @Volatile var running = false
     /** Tela principal aberta: aí o Android deixa o serviço abrir outro app sem permissão especial. */
@@ -144,15 +119,9 @@ object CapriBus {
 
     var onChange: (() -> Unit)? = null
 
-    /** Barrinha "ouvindo" visível (a BarActivity fecha quando vira false). */
+    /** Barrinha "ouvindo" visível: a janela do assistente a mostra e se fecha quando vira false. */
     @Volatile var barVisible = false
     var onBar: (() -> Unit)? = null
-
-    /**
-     * Janela do assistente (botão de ligar) aberta: é ela que mostra a barra, então o serviço
-     * não abre outra (flutuante nem BarActivity).
-     */
-    @Volatile var assistUi = false
 
     /** O usuário fechou a janela do assistente no meio da conversa: o serviço para de ouvir e de falar. */
     var onAssistCancel: (() -> Unit)? = null
@@ -224,7 +193,7 @@ object CapriBus {
 
 /**
  * Quanto tempo cada etapa de uma pergunta levou, para achar onde a Capri demora.
- * Marcas que não aconteceram (ex.: pergunta ouvida pelo Vosk) só ficam fora do resumo.
+ * Marcas que não aconteceram (ex.: pedido resolvido sem ouvir de novo) só ficam fora do resumo.
  */
 object Timing {
     private val marks = HashMap<String, Long>()
@@ -251,37 +220,8 @@ object Timing {
         Triple("mic", "inicio", "micPronto"),       // bipe + abrir o reconhecedor
         Triple("fala", "micPronto", "fimFala"),     // a pessoa falando
         Triple("silêncio", "fimFala", "pergunta"),  // reconhecedor esperando confirmar o fim
-        Triple("resposta", "pergunta", "resposta"), // Gemini (ou comando local)
+        Triple("resposta", "pergunta", "resposta"), // IA (ou comando local)
         Triple("voz", "resposta", "voz"),           // até o som começar a sair
         Triple("total", "inicio", "voz"),
     )
-}
-
-/** Copia o modelo do Vosk de dentro do APK para a memória do app (só na primeira vez). */
-object ModelInstaller {
-    private const val VERSION = "v1"
-
-    fun ensure(ctx: Context): File {
-        val target = File(ctx.filesDir, "model")
-        val marker = File(target, ".copiado-$VERSION")
-        if (marker.exists()) return target
-        target.deleteRecursively()
-        target.mkdirs()
-        val top = ctx.assets.list("model")
-        if (top.isNullOrEmpty()) throw IllegalStateException("O modelo de voz não veio dentro do APK")
-        copy(ctx.assets, "model", target)
-        marker.createNewFile()
-        return target
-    }
-
-    private fun copy(am: AssetManager, path: String, dest: File) {
-        val children = am.list(path) ?: emptyArray()
-        if (children.isEmpty()) {
-            dest.parentFile?.mkdirs()
-            am.open(path).use { input -> FileOutputStream(dest).use { input.copyTo(it) } }
-            return
-        }
-        dest.mkdirs()
-        for (c in children) copy(am, "$path/$c", File(dest, c))
-    }
 }

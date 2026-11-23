@@ -6,15 +6,18 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Recusa passageira do provedor (cota, servidor cheio ou demora): vale tentar outro modelo ou provedor. */
-class BusyException(val kind: Kind, msg: String) : IOException(msg) {
+/**
+ * Recusa passageira do provedor (cota, servidor cheio ou demora): vale tentar outro modelo.
+ * [retryMs] é quanto o servidor pediu para esperar (0 = não disse).
+ */
+class BusyException(val kind: Kind, msg: String, val retryMs: Long = 0) : IOException(msg) {
     enum class Kind { QUOTA, OVERLOADED, TIMEOUT }
 }
 
-/** Erro que não melhora tentando de novo agora (chave, modelo, pedido). */
-class ApiException(val code: Int, msg: String) : IOException(msg)
+/** Erro que não melhora tentando de novo agora (chave, modelo, pedido). [body] é a resposta crua do servidor. */
+class ApiException(val code: Int, msg: String, val body: String = "") : IOException(msg)
 
-/** Um provedor de IA (Gemini, Groq): recebe a conversa e devolve texto ou um pedido de função. */
+/** Um provedor de IA (hoje só o Groq): recebe a conversa e devolve texto ou um pedido de função. */
 interface AiProvider {
     val label: String
 
@@ -51,33 +54,49 @@ object HttpErrors {
         else -> "erro"
     }
 
-    /** Mensagem do corpo de erro ({"error":{"message":...}}) e, no Gemini, qual cota estourou. */
+    /** Mensagem do corpo de erro ({"error":{"message":...}}). */
     fun detail(resp: String): String {
         val err = try { JSONObject(resp).optJSONObject("error") } catch (_: Exception) { null }
             ?: return resp.take(200)
-        val sb = StringBuilder(err.optString("message").take(200))
-        val details = err.optJSONArray("details")
-        if (details != null) for (i in 0 until details.length()) {
-            val d = details.optJSONObject(i) ?: continue
-            d.optJSONArray("violations")?.optJSONObject(0)?.optString("quotaId")?.takeIf { it.isNotBlank() }
-                ?.let { sb.append(" · cota: $it") }
-            d.optString("retryDelay").takeIf { it.isNotBlank() }?.let { sb.append(" · tentar em $it") }
+        return err.optString("message").take(200)
+    }
+
+    /** O código do erro ({"error":{"code":...}}), ex.: "tool_use_failed"; vazio se não houver. */
+    fun errorCode(resp: String): String =
+        try { JSONObject(resp).optJSONObject("error")?.optString("code").orEmpty() } catch (_: Exception) { "" }
+
+    /**
+     * Quanto esperar até a cota voltar, em ms: o cabeçalho retry-after (segundos) ou o "try again in 1m5.2s"
+     * da mensagem. 0 = o servidor não disse.
+     */
+    fun retryMs(retryAfter: String?, resp: String): Long {
+        retryAfter?.trim()?.toDoubleOrNull()?.takeIf { it > 0 }?.let { return (it * 1000).toLong() }
+        val text = try { JSONObject(resp).optJSONObject("error")?.optString("message") } catch (_: Exception) { null } ?: resp
+        val wait = Regex("try again in ([0-9a-z.]+)", RegexOption.IGNORE_CASE).find(text)?.groupValues?.get(1) ?: return 0
+        var ms = 0.0
+        for (m in Regex("(\\d+(?:\\.\\d+)?)(ms|h|m|s)").findAll(wait)) {
+            val n = m.groupValues[1].toDouble()
+            ms += when (m.groupValues[2]) {
+                "h" -> n * 3_600_000
+                "m" -> n * 60_000
+                "s" -> n * 1_000
+                else -> n
+            }
         }
-        return sb.toString()
+        return ms.toLong()
     }
 
     /** Lança a exceção certa para um código fora de 2xx. */
-    fun fail(provider: String, model: String, code: Int, resp: String): Nothing {
+    fun fail(provider: String, model: String, code: Int, resp: String, retryAfter: String? = null): Nothing {
         val msg = "$provider: ${what(code)} (HTTP $code em $model). ${detail(resp)}".trim()
         val kind = busyKind(code)
-        if (kind != null) throw BusyException(kind, msg)
-        throw ApiException(code, msg)
+        if (kind != null) throw BusyException(kind, msg, if (code == 429) retryMs(retryAfter, resp) else 0)
+        throw ApiException(code, msg, resp)
     }
 
-    /** O que a Capri fala quando nenhum provedor conseguiu responder. */
+    /** O que a Capri fala quando nenhum modelo conseguiu responder. */
     fun spoken(e: Exception): String = when {
-        e is BusyException && e.kind == BusyException.Kind.QUOTA ->
-            "Acabou a cota grátis da inteligência artificial por agora. Tenta de novo daqui a pouco."
+        e is BusyException && e.kind == BusyException.Kind.QUOTA -> quotaSpoken(e.retryMs)
         e is BusyException && e.kind == BusyException.Kind.TIMEOUT ->
             "A inteligência artificial demorou demais para responder. Tenta de novo."
         e is BusyException -> "O servidor da inteligência artificial está sobrecarregado agora. Tenta de novo daqui a pouco."
@@ -86,9 +105,22 @@ object HttpErrors {
         e is ApiException && e.code == 404 -> "O modelo configurado não existe mais. Troca nas configurações."
         else -> "Deu um erro ao falar com a inteligência artificial. Dá uma olhada no aplicativo."
     }
+
+    /** Cota esgotada: diz em quanto tempo volta, quando o servidor informou. */
+    private fun quotaSpoken(ms: Long): String {
+        fun unit(n: Long, one: String, many: String) = "$n ${if (n == 1L) one else many}"
+        return when {
+            ms <= 0 -> "Acabou a cota grátis da inteligência artificial por agora. Tenta de novo daqui a pouco."
+            ms < 90_000 -> "Muitas perguntas em pouco tempo. Tenta de novo em ${unit((ms + 999) / 1_000, "segundo", "segundos")}."
+            ms < 90 * 60_000L -> "Acabou a cota grátis da inteligência artificial por agora. " +
+                "Volta em cerca de ${unit((ms + 59_999) / 60_000, "minuto", "minutos")}."
+            else -> "Acabou a cota grátis da inteligência artificial por hoje. " +
+                "Volta em cerca de ${unit((ms + 3_599_999) / 3_600_000, "hora", "horas")}."
+        }
+    }
 }
 
-/** Uma função que a IA pode pedir. Tipos em maiúsculas (formato do Gemini); o Groq converte. */
+/** Uma função que a IA pode pedir. Tipos no formato do JSON Schema: string, boolean, integer. */
 class ToolDef(val name: String, val description: String, val required: List<String>, val props: List<Prop>) {
     class Prop(val name: String, val type: String, val description: String)
 }
@@ -106,12 +138,11 @@ Suas respostas serão lidas em voz alta por um sintetizador de voz, então:
 - para data e hora, use o relógio do celular informado no fim destas instruções.
 Seja simpática e direta."""
 
-    const val ACTIONS = """Você consegue agir no celular usando as funções disponíveis:
-- ligar ou fazer chamada de vídeo: ligar_whatsapp (você só liga pelo WhatsApp; não existe ligação telefônica comum);
-- clima, notícias, resultados de jogos ou qualquer coisa atual: pesquisar_na_web;
-- lanterna, volume, timer, alarme e lembretes: as funções com esses nomes;
-- lista de tarefas, afazeres ou anotar algo para não esquecer: lista_tarefas.
-Se o pedido não precisar de nenhuma função, só responda."""
+    /** O que cada função faz já está na descrição dela; aqui só o que ajuda a escolher entre elas. */
+    const val ACTIONS = """Você age no celular usando as funções disponíveis; se nenhuma servir, só responda.
+- você só liga pelo WhatsApp (não existe ligação telefônica comum);
+- para clima, notícias, resultados de jogos ou qualquer coisa atual, pesquise na web;
+- lembretes ("me lembra de X às 20h") são alarmes; coisas para não esquecer vão na lista de tarefas."""
 
     const val SEARCH = "Pesquise na web para responder com informação atual."
 
@@ -125,26 +156,26 @@ Se o pedido não precisar de nenhuma função, só responda."""
     val TOOLS = listOf(
         ToolDef(CALL_TOOL, "Faz uma ligação de voz ou chamada de vídeo pelo WhatsApp para um contato da agenda do celular.",
             listOf("contato"), listOf(
-                p("contato", "STRING", "Nome do contato do jeito que o usuário falou, ex.: \"João\", \"mãe\", \"Ana da academia\"."),
-                p("video", "BOOLEAN", "true se o usuário pediu chamada de vídeo; false para ligação de voz."))),
+                p("contato", "string", "Nome do contato do jeito que o usuário falou, ex.: \"João\", \"mãe\", \"Ana da academia\"."),
+                p("video", "boolean", "true se o usuário pediu chamada de vídeo; false para ligação de voz."))),
         ToolDef(SEARCH_TOOL, "Pesquisa na web informação atual: clima, notícias, resultados de jogos, preços, eventos recentes.",
             listOf("consulta"), listOf(
-                p("consulta", "STRING", "O que pesquisar, em poucas palavras."))),
+                p("consulta", "string", "O que pesquisar, em poucas palavras."))),
         ToolDef("lanterna", "Liga ou desliga a lanterna do celular.", listOf("ligar"), listOf(
-            p("ligar", "BOOLEAN", "true para ligar, false para desligar."))),
+            p("ligar", "boolean", "true para ligar, false para desligar."))),
         ToolDef("volume", "Muda o volume de mídia do celular.", listOf("acao"), listOf(
-            p("acao", "STRING", "Uma destas: aumentar, diminuir, maximo, mudo."))),
+            p("acao", "string", "Uma destas: aumentar, diminuir, maximo, mudo."))),
         ToolDef("timer", "Inicia um timer (contagem regressiva) no app de relógio.", listOf("segundos"), listOf(
-            p("segundos", "INTEGER", "Duração total em segundos."))),
+            p("segundos", "integer", "Duração total em segundos."))),
         ToolDef("alarme", "Cria um alarme no app de relógio. Use também para lembretes (\"me lembra de X às 20h\"); só aceita a próxima vez que esse horário chegar.",
             listOf("hora", "minuto"), listOf(
-                p("hora", "INTEGER", "Hora de 0 a 23."),
-                p("minuto", "INTEGER", "Minuto de 0 a 59."),
-                p("descricao", "STRING", "Texto do lembrete, ex.: \"tomar remédio\". Vazio para despertador."))),
+                p("hora", "integer", "Hora de 0 a 23."),
+                p("minuto", "integer", "Minuto de 0 a 59."),
+                p("descricao", "string", "Texto do lembrete, ex.: \"tomar remédio\". Vazio para despertador."))),
         ToolDef("lista_tarefas", "Mexe na lista de tarefas (afazeres) do usuário, salva no celular: adicionar, ler, contar, remover (feita/concluída) ou limpar tudo.",
             listOf("acao"), listOf(
-                p("acao", "STRING", "Uma destas: adicionar, ler, contar, remover, limpar."),
-                p("texto", "STRING", "Para adicionar: a tarefa, curta, ex.: \"comprar pão\". Para remover: o nome ou parte do nome da tarefa."),
-                p("numero", "INTEGER", "Para remover pela posição na lista (1 = primeira). 0 se for pelo nome."))),
+                p("acao", "string", "Uma destas: adicionar, ler, contar, remover, limpar."),
+                p("texto", "string", "Para adicionar: a tarefa, curta, ex.: \"comprar pão\". Para remover: o nome ou parte do nome da tarefa."),
+                p("numero", "integer", "Para remover pela posição na lista (1 = primeira). 0 se for pelo nome."))),
     )
 }

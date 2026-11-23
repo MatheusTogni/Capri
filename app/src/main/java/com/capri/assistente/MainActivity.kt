@@ -41,7 +41,9 @@ class MainActivity : NeonActivity() {
     private lateinit var statusDot: View
     private lateinit var heardView: TextView
     private lateinit var logView: TextView
-    private lateinit var toggle: Button
+    private lateinit var assistButton: Button
+    private lateinit var assistHint: TextView
+    private var assistant = false // a Capri é o assistente do celular? (relido ao voltar para a tela)
     private var pulse: ObjectAnimator? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,11 +77,14 @@ class MainActivity : NeonActivity() {
             addView(heardView)
         }, blockParams(dp(16)))
 
-        toggle = neonButton("", Neon.RED, filled = true).apply {
-            textSize = 17f
-            setOnClickListener { onToggle() }
+        // a Capri só acorda pelo botão de ligar do celular: este botão leva à escolha do "App de assistente digital"
+        assistButton = neonButton("", Neon.RED, filled = true).apply {
+            textSize = 15f
+            setOnClickListener { onChooseAssistant() }
         }
-        root.addView(toggle, LinearLayout.LayoutParams(MATCH_PARENT, dp(56)).apply { topMargin = dp(14) })
+        root.addView(assistButton, LinearLayout.LayoutParams(MATCH_PARENT, dp(56)).apply { topMargin = dp(14) })
+        assistHint = mono(12f, Neon.MUTED).apply { setPadding(0, dp(8), 0, 0) }
+        root.addView(assistHint)
 
         // ---- histórico ----
         root.addView(section("Histórico"))
@@ -106,6 +111,7 @@ class MainActivity : NeonActivity() {
     override fun onResume() {
         super.onResume()
         CapriBus.uiVisible = true
+        assistant = isAssistant() // pode ter mudado na tela de configurações do Android
         CapriBus.onChange = { render() }
         Updater.listener = { refreshUpdateCard() }
         Updater.onConfirm = { startActivity(it) }
@@ -136,9 +142,18 @@ class MainActivity : NeonActivity() {
         heardView.visibility = if (CapriBus.heard.isBlank()) View.GONE else View.VISIBLE
         logView.text = CapriBus.logText().ifBlank { "> nada ainda_" }
 
+        if (assistant) {
+            assistButton.text = "✓  CAPRI É SUA ASSISTENTE"
+            styleButton(assistButton, Neon.GREEN, filled = false)
+            assistHint.text = "Segure o botão de ligar do celular e fale. O microfone só abre nessa hora."
+        } else {
+            assistButton.text = "★  ESCOLHER COMO ASSISTENTE"
+            styleButton(assistButton, Neon.RED, filled = true)
+            assistHint.text = "Em \"App de assistente digital\", escolha a Capri. Depois é só segurar o botão de ligar."
+        }
+
+        // o ponto do status pulsa durante a conversa
         if (CapriBus.running) {
-            toggle.text = "■  DESLIGAR CAPRI"
-            styleButton(toggle, Neon.GREEN, filled = false)
             if (pulse == null) {
                 pulse = ObjectAnimator.ofFloat(statusDot, View.ALPHA, 1f, 0.2f).apply {
                     duration = 700
@@ -148,44 +163,32 @@ class MainActivity : NeonActivity() {
                 }
             }
         } else {
-            toggle.text = "▶  LIGAR CAPRI"
-            styleButton(toggle, Neon.RED, filled = true)
             pulse?.cancel()
             pulse = null
             statusDot.alpha = 1f
         }
     }
 
-    private fun onToggle() {
-        if (CapriBus.running) {
-            startService(Intent(this, CapriService::class.java).setAction(CapriService.ACTION_STOP))
-            return
+    private fun onChooseAssistant() {
+        if (prefs.groqKey.isBlank()) {
+            Toast.makeText(this, "Dica: salve a chave do Groq nas configurações (engrenagem).", Toast.LENGTH_LONG).show()
         }
         // contatos e telefone são opcionais: sem eles a Capri só não consegue ligar pelo WhatsApp
         val needed = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_CONTACTS,
             Manifest.permission.CALL_PHONE)
         if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
         val missing = needed.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-        if (missing.isEmpty()) startCapri() else requestPermissions(missing.toTypedArray(), REQ_PERMS)
+        if (missing.isEmpty()) openAssistantPicker() else requestPermissions(missing.toTypedArray(), REQ_PERMS)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_PERMS) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            startCapri()
+            openAssistantPicker()
         } else {
             Toast.makeText(this, "Sem o microfone a Capri não consegue ouvir.", Toast.LENGTH_LONG).show()
         }
-    }
-
-    private fun startCapri() {
-        if (prefs.apiKey.isBlank()) {
-            Toast.makeText(this, "Dica: salve a chave do Gemini nas configurações (engrenagem).", Toast.LENGTH_LONG).show()
-        }
-        startForegroundService(Intent(this, CapriService::class.java))
-        CapriBus.running = true
-        render()
     }
 
     // ---------- atualização ----------

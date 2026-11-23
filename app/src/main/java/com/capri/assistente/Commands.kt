@@ -36,8 +36,8 @@ sealed class Command {
 }
 
 /**
- * Reconhece pedidos simples sem passar pelo Gemini (resposta na hora, sem gastar cota).
- * Só pega frases bem diretas; o resto vai para o Gemini, que também sabe pedir essas ações.
+ * Reconhece pedidos simples sem passar pela IA (resposta na hora, sem gastar cota).
+ * Só pega frases bem diretas; o resto vai para a IA, que também sabe pedir essas ações.
  */
 object LocalCommands {
 
